@@ -386,7 +386,7 @@ Quand l'app est mature (5+ versions publiées sur GitHub Releases, bugs connus d
 ## 🌍 Pourquoi la France métropolitaine en particulier ?
 
 - **Nominatim/OSRM** couvrent France avec qualité exceptionnelle (camions, piétons, vélos)
-- **Volume quotidien** (>100 colis/jour) typique des livreurs Chronopost, Mondial Relay, Stuart, Coursier.fr
+- **Volume quotidien** (>100 colis/jour) typique des livreurs DPD France, Chronopost, Mondial Relay, Stuart, Coursier.fr
 - **Pas de contrainte GDPR data-residency hors UE** — données restent en France ou sur le device
 - **Hausse e-commerce** (cf. FEVAD 2025) — marché saturé, donc gain de temps via optimisation = avantage compétitif direct
 
