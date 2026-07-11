@@ -1,0 +1,209 @@
+name: Build & Release TransAs APK
+
+# Triggers:
+#   - Tag push matching v* (e.g. v0.1, v0.1.2): builds + uploads to Releases.
+#   - Manual dispatch via the "Run workflow" button: dry-run build only, never
+#     publishes. The input form lets the maintainer test the build pipeline
+#     without burning a real tag.
+#
+# Implements Path A (sideload via GitHub Releases) from the F-Droid
+# distribution strategy doc.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip the upload to Releases (build only)"
+        type: boolean
+        default: false
+
+# Avoid wasting parallel runners
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - armeabi-v7a
+          - arm64-v8a
+          - x86_64
+
+    env:
+      ANDROIDSDK: ${{ github.workspace }}/.android-sdk
+      ANDROIDAPI: 34
+      ANDROIDMINAPI: 21
+      ANDROIDNDK: 26.3.11579264
+      KEYSTORE_FILE: ${{ github.workspace }}/.android-sdk/transas-release.jks
+
+    steps:
+      # 1. Pull source
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # 2. Toolchain (JAVA_HOME explicitly exported via actions/setup-java)
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up OpenJDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Linux host build libraries (Kivy SDL2 stack)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq \
+            libffi-dev libssl-dev libsqlite3-dev libpango1.0-dev \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
+            libgstreamer1.0-dev libasound2-dev \
+            unzip 7zip
+
+      - name: Install Python deps (Cython pin + buildozer)
+        run: |
+          python -m pip install --upgrade pip wheel
+          # Kivy 2.3 recipes break on Cython 3.x ABI; pin to 0.29.x.
+          pip install 'Cython>=0.29.36,<3.0.0' buildozer
+
+      # 3. Android SDK
+      - name: Install Android SDK cmdline-tools
+        run: |
+          mkdir -p "${ANDROIDSDK}/cmdline-tools"
+          cd "${ANDROIDSDK}/cmdline-tools"
+          curl -fsSL -o cmdline.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          unzip -q cmdline.zip
+          rm cmdline.zip
+          mv cmdline-tools latest || true
+
+      - name: Accept licenses + install Android components
+        env:
+          ANDROID_HOME: ${{ env.ANDROIDSDK }}
+        run: |
+          yes | "${ANDROIDSDK}/cmdline-tools/latest/bin/sdkmanager" --licenses
+          "${ANDROIDSDK}/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-${ANDROIDAPI}" \
+            "build-tools;34.0.0" \
+            "ndk;${ANDROIDNDK}"
+
+      # 4. Decode the release keystore from a GitHub Secret (real tag push only)
+      - name: Decode release keystore from secret
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "${KEYSTORE_BASE64:-}" ]]; then
+            echo "::error::secret KEYSTORE_BASE64 is missing." >&2
+            echo "Run: bash scripts/setup_keystore.sh and set the GitHub secret first." >&2
+            exit 1
+          fi
+          echo "${KEYSTORE_BASE64}" | base64 -d > "${KEYSTORE_FILE}"
+          chmod 600 "${KEYSTORE_FILE}"
+          keytool -list -v -keystore "${KEYSTORE_FILE}" \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" || {
+            echo "::error::Could not unlock keystore, check KEYSTORE_PASSWORD secret." >&2
+            exit 2
+          }
+
+      # 4b. Activate android.keystore + android.keyalias in buildozer.spec
+      # We ship those lines commented-out by default so casual readers of
+      # buildozer.spec don't accidentally ship with a real keystore. CI
+      # activates them only when a real release tag is being cut.
+      - name: Activate release signing in buildozer.spec
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          sed -i \
+            -e 's|^# android\.keystore = .*|android.keystore = %(source.dir)s/transas-release.jks|' \
+            -e 's|^# android\.keyalias = .*|android.keyalias = transas|' \
+            buildozer.spec
+          echo "-- Active lines after sed:"
+          grep -E '^\s*android\.(keystore|keyalias)' buildozer.spec || {
+            echo "::error::sed did not activate the keystore lines. Check buildozer.spec format." >&2
+            exit 3
+          }
+
+      # 5. Build the APK
+      - name: Build APK (${{ matrix.arch }})
+        env:
+          ANDROIDSDK: ${{ env.ANDROIDSDK }}
+          ANDROIDAPI: ${{ env.ANDROIDAPI }}
+          ANDROIDNDK: ${{ env.ANDROIDNDK }}
+          P4A_RELEASE_KEYSTORE: ${{ env.KEYSTORE_FILE }}
+          P4A_RELEASE_KEYALIAS: ${{ secrets.KEY_ALIAS }}
+          P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.KEYSTORE_PASSWORD }}
+          P4A_RELEASE_KEY_PASSWD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          bash scripts/prepare_cover.sh   # cover/icon.jpg (idempotent)
+          buildozer --verbose android debug \
+            arch=${{ matrix.arch }} \
+            2>&1 | tee buildozer-${{ matrix.arch }}.log
+
+      # 6. Locate the produced APK
+      - name: Find built APK
+        id: find_apk
+        run: |
+          APK=$(find bin -maxdepth 1 -name "transas-*.apk" \
+                  -path "*${{ matrix.arch }}*" -print -quit)
+          if [[ -z "${APK}" ]]; then
+            echo "::error::No APK found for arch=${{ matrix.arch }} under bin/" >&2
+            ls -la bin/ || true
+            exit 1
+          fi
+          echo "apk_path=${APK}" >> "$GITHUB_OUTPUT"
+          echo "Built APK: ${APK}  ($(du -h "${APK}" | cut -f1))"
+
+      # 7. Verify signature + badging (only on real tag push)
+      - name: Verify APK signature and badging
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        id: verify
+        env:
+          PATH: ${{ env.ANDROIDSDK }}/build-tools/34.0.0:${{ env.PATH }}
+        run: |
+          APK="${{ steps.find_apk.outputs.apk_path }}"
+          apksigner verify -v "${APK}"
+          aapt2 dump badging "${APK}" 2>/dev/null | head -10
+
+      # 8. Upload to GitHub Releases (real tag push ONLY)
+      # workflow_dispatch never reaches this step: dispatch is dry-run by
+      # design (the input form lets maintainers test CI without burning a
+      # public release slot).
+      - name: Upload APK to GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: TransAs ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.find_apk.outputs.apk_path }}
+            buildozer-${{ matrix.arch }}.log
+
+      # 9. Always upload the APK as a build artifact (for ad-hoc inspection)
+      - name: Upload APK as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transas-${{ matrix.arch }}-${{ github.ref_name }}
+          path: |
+            ${{ steps.find_apk.outputs.apk_path }}
+            buildozer-${{ matrix.arch }}.log
+          if-no-files-found: error

@@ -1,0 +1,111 @@
+name: Security Audit
+
+# Runs static-analysis security tooling on the TransAs source tree.
+# Three triggers:
+#   - Weekly schedule (Mon 06:00 UTC): catch new CVEs as dependencies age.
+#   - pull_request: every PR is audited; severity-gated findings block merge.
+#   - push to main: post-merge re-audit; failure can be triaged via issue.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+  push:
+    branches: [ main ]
+
+# Avoid wasting parallel runners on rapid successive commits.
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  pip-audit:
+    name: pip-audit (Python CVE scan)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Run pip-audit against the committed dependency list
+        # audits against requirements-audit.txt (not a heredoc) so the
+        # file is reviewable in pull requests. Uses OSV.dev directly
+        # (--vulnerability-service osv) \u2014 the same backend GitHub
+        # Dependabot queries \u2014 instead of pyup.io's shrinking list.
+        env:
+          PIP_INDEX_URL: https://pypi.org/simple
+        run: |
+          set -euo pipefail
+          pip-audit \
+            --strict \
+            --skip-editable \
+            --vulnerability-service osv \
+            --requirement requirements-audit.txt
+
+  bandit:
+    name: bandit (Python static analysis)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install bandit (with import resolver for false-positive reduction)
+        run: pip install "bandit[pylint-import-resolver]"
+
+      - name: Run bandit (severity-gated)
+        # The repo-root `.bandit` file is consumed automatically and
+        # excludes tests/ + .venv/ + build artifacts. Severity-level
+        # high means any HIGH or CRITICAL bandit finding exits non-zero
+        # and blocks CI. Medium / Low are reported as INFO.
+        run: |
+          set -euo pipefail
+          bandit --recursive --severity-level high .
+
+  shellcheck:
+    name: shellcheck (shell script lint)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -q && sudo apt-get install -yq shellcheck
+
+      - name: Run shellcheck
+        # `--severity=warning` reports and gates on warning or above
+        # (style/info/warning/error). Style / info findings stay advisory.
+        run: |
+          set -euo pipefail
+          shellcheck --severity=warning scripts/*.sh
+
+  gitleaks:
+    name: gitleaks (secret scanner)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for accurate scanning
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

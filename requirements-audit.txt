@@ -1,0 +1,27 @@
+# TransAs — full dependency list audited by `pip-audit` (see
+# .github/workflows/security.yml). This is a superset of `requirements.txt`
+# (runtime deps) plus the build-time / packaging deps declared in
+# `buildozer.spec` so weekly audits cover the entire APK build chain.
+#
+# Format: pinned ranges (the same as the install commands in buildozer.spec
+# and the in-venv install in `.github/workflows/release.yml`).
+#
+# When the audit pipeline is run, every dependency listed here is checked
+# against the OSV.dev vulnerability database via:
+#
+#     pip-audit --strict --requirement requirements-audit.txt \
+#               --vulnerability-service osv
+
+# Runtime deps from `requirements.txt`
+requests>=2.31.0
+geopy>=2.4.0
+pytest>=7.4.0
+
+# Build-time deps from `.github/workflows/release.yml`
+buildozer>=1.5
+Cython>=0.29.36,<3.0.0
+
+# Packaging deps from `buildozer.spec` (used by python-for-android,
+# not installed in our dev venv but compiled into the APK)
+kivy==2.3.0
+kivymd==1.1.1

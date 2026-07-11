@@ -1,0 +1,96 @@
+# ─── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# mypy / ruff / pylint
+.mypy_cache/
+.ruff_cache/
+.pylint.d/
+
+# ─── Buildozer / Android build outputs ────────────────────────────────────────
+# CRITIQUE: ne JAMAIS commit les binaires produits
+.buildozer/
+bin/
+build/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Android Gradle Project (transitoire)
+.gradle/
+local.properties
+*.iml
+.idea/
+
+# Android Keystores — DO NOT COMMIT
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
+signing.properties
+
+# ─── Secrets / env files ──────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+secrets/
+
+# ─── OS junk ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDE / editor ─────────────────────────────────────────────────────────────
+.vscode/
+.vscode-test/
+*.swp
+*.swo
+*~
+
+# ─── Coverage / build artifacts ───────────────────────────────────────────────
+*.egg-info/
+*.egg
+dist/
+build/
+
+# ─── TransAs-specific artifacts ───────────────────────────────────────────────
+# (we keep `cover/icon.jpg` since it's the actual cover asset once prepared;
+# but exclude any `*.jks` style local release keys)
+
+# ─── Keystore local info helper (from scripts/setup_keystore.sh) ────────────
+# Contains SHA-256 of release keystore + alias fingerprints and GitHub
+# Secrets setup instructions. NEVER commit.
+scripts/last-keystore-info.txt
+
+# ─── Additional cryptographic formats (paranoid) ────────────────────────────
+# X.509 DER, GPG ASCII-armored sigs, raw binary keys, etc. — any of these
+# turning up in the repo would be a leak.
+*.der
+*.asc
+*.key
+
+# ─── Misc secrets-bearing artifact shapes ────────────────────────────────────
+**/keystore_alias
+**/key.properties
+gradle.properties  # if it ever appears, it may carry signing config

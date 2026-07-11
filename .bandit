@@ -1,0 +1,20 @@
+# Bandit static-analysis config.
+# Consumed automatically by `bandit --recursive` from the repo root.
+# See https://bandit.readthedocs.io/en/latest/config.html for the full
+# schema.
+#
+# Matches the inline comment in `.github/workflows/security.yml` so the
+# audit pipeline actually skips test fixtures from the analysis.
+
+[bandit]
+exclude_dirs:
+  - tests
+  - .venv
+  - .cache
+  - .git
+  - .pytest_cache
+  - build
+  - bin
+# Any finding with severity at or above the gate fails CI.
+# Findings at medium or lower are suppressed entirely with --severity-level high
+# (bandit has no INFO level -- they are simply not reported).
