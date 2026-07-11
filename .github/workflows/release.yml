@@ -69,12 +69,40 @@ jobs:
 
       - name: Install Linux host build libraries (Kivy SDL2 stack)
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -yq \
-            libffi-dev libssl-dev libsqlite3-dev libpango1.0-dev \
-            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
-            libgstreamer1.0-dev libasound2-dev \
-            unzip 7zip
+          set -euo pipefail
+          # Kivy 2.3 / p4a needs the SDL2 + Pango stack. p7zip-full is the
+          # canonical name on ubuntu-22.04 (the bare `7zip` alias only exists
+          # on 24.04+). libunwind-dev is a transitive dep of
+          # libgstreamer1.0-dev — pinning it explicitly avoids the
+          # held-broken state seen on fresh runner images.
+          PKGS=(libffi-dev libssl-dev libsqlite3-dev libpango1.0-dev
+                libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev
+                libgstreamer1.0-dev libunwind-dev libasound2-dev
+                unzip p7zip-full)
+          # Retry apt-get update once on transient mirror failures
+          # (GitHub shared runners occasionally 503 under load).
+          sudo apt-get update -q || (sleep 8 && sudo apt-get update -q)
+          # Single install call: --fix-broken repairs anything previously
+          # held on the runner, then the explicit PKGS list is installed in
+          # one shot — avoids the ABI churn of two separate install rounds.
+          sudo apt-get install -y --fix-broken --no-install-recommends "${PKGS[@]}"
+          # Real sanity check: dpkg-query -W exits non-zero on unknown
+          # packages, AND we assert the Status field reads "install ok
+          # installed" — so absent or half-installed packages fail loud.
+          # We use `if` (not `!`) so set -e doesn't bail at the FIRST
+          # missing package — we want the full list of bad packages.
+          missing=()
+          for p in "${PKGS[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "$p" 2>/dev/null \
+                 | grep -q 'install ok installed'; then
+              missing+=("$p")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing or half-installed packages after apt: ${missing[*]}" >&2
+            exit 1
+          fi
+          echo "::notice::All ${#PKGS[@]} required packages installed OK."
 
       - name: Install Python deps (Cython pin + buildozer)
         run: |
