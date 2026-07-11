@@ -44,11 +44,11 @@ jobs:
           - x86_64
 
     env:
-      ANDROIDSDK: ${{ github.workspace }}/.android-sdk
       ANDROIDAPI: 34
       ANDROIDMINAPI: 21
       ANDROIDNDK: 26.3.11579264
-      KEYSTORE_FILE: ${{ github.workspace }}/.android-sdk/transas-release.jks
+      # No ANDROIDSDK here — set instead by the Setup Android SDK step.
+      KEYSTORE_FILE: ${{ github.workspace }}/transas-release.jks
 
     steps:
       # 1. Pull source
@@ -111,46 +111,26 @@ jobs:
           pip install 'Cython>=0.29.36,<3.0.0' buildozer
 
       # 3. Android SDK
-      - name: Install Android SDK cmdline-tools
-        run: |
-          set -euo pipefail
-          mkdir -p "${ANDROIDSDK}"
-          # Reset cleanly: a partial previous run may have left latest/ in
-          # a half-populated state. Removing it before mv is critical
-          # because Google's zip extracts to `cmdline-tools/{bin,lib,..}`
-          # and on re-run we need a clean rename target.
-          rm -rf "${ANDROIDSDK}/cmdline-tools"
-          curl -fsSL -o /tmp/cmdline.zip \
-            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
-          unzip -q /tmp/cmdline.zip -d "${ANDROIDSDK}"
-          rm /tmp/cmdline.zip
-          # The zip's top-level directory is `cmdline-tools/`; canonical
-          # location expected by sdkmanager is cmdline-tools/latest/bin/.
-          mv "${ANDROIDSDK}/cmdline-tools" "${ANDROIDSDK}/cmdline-tools-$$"
-          mkdir -p "${ANDROIDSDK}/cmdline-tools"
-          mv "${ANDROIDSDK}/cmdline-tools-$$" "${ANDROIDSDK}/cmdline-tools/latest"
-          test -x "${ANDROIDSDK}/cmdline-tools/latest/bin/sdkmanager" \
-            || { echo "::error::sdkmanager not found after extraction"; \
-                 ls -laR "${ANDROIDSDK}/cmdline-tools" | head -50 >&2; exit 1; }
-          echo "::notice::Android cmdline-tools extracted to ${ANDROIDSDK}/cmdline-tools/latest/"
+      # Use the community-maintained `android-actions/setup-android@v3` to
+      # download cmdline-tools, accept SDK licenses and install the
+      # required components. The previous manual curl/unzip pattern was
+      # brittle on ubuntu-22.04 runners (ClassNotFoundException for
+      # SdkManagerCli despite a successful extraction — Google's zip
+      # layout or shell-wrapper internals changed).
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-${{ env.ANDROIDAPI }}
+            build-tools;34.0.0
+            ndk;${{ env.ANDROIDNDK }}
 
-      - name: Accept licenses + install Android components
-        env:
-          ANDROID_HOME: ${{ env.ANDROIDSDK }}
-        run: |
-          set -euo pipefail
-          # `yes | sdkmanager` would normally fail this script with pipefail
-          # because `yes` exits 141 (SIGPIPE) when sdkmanager is done — but
-          # the sdkmanager side successfully accepted the licenses.
-          # Process substitution avoids the SIGPIPE failure while keeping
-          # pipefail on, so a real sdkmanager crash still aborts the step.
-          "${ANDROIDSDK}/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) || \
-            { echo "::error::sdkmanager --licenses failed"; exit 1; }
-          "${ANDROIDSDK}/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" \
-            "platforms;android-${ANDROIDAPI}" \
-            "build-tools;34.0.0" \
-            "ndk;${ANDROIDNDK}"
+      - name: Expose ANDROIDSDK env var for buildozer
+        # The community action sets $ANDROID_HOME, but buildozer's
+        # build.py reads $ANDROIDSDK. Bridge so downstream steps don't
+        # see a missing-env error.
+        run: echo "ANDROIDSDK=${ANDROID_HOME}" >> "$GITHUB_ENV"
 
       # 4. Decode the release keystore from a GitHub Secret (real tag push only)
       - name: Decode release keystore from secret
