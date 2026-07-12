@@ -368,6 +368,45 @@ jobs:
           echo "::notice::p4a patched OK: ALL Cython selectors collapsed to ==0.29.36"
           grep -rn 'Cython==0\.29\.36' "${P4A_LOCAL}/pythonforandroid" \
               | head -5 | sed 's/^/::notice::    /'
+          # CRITICAL FIX (iter-36): NDK clang shim wrapper for autoconf probes.
+          # libffi / openssl / sqlite / libxml2 configure scripts probe
+          # `$CC --print-multi-os-directory` to detect multiarch lib dirs.
+          # clang-14 strictly rejects this GCC-only flag with `unsupported
+          # option` + exit 1, aborting configure pre-build. Confirmed in:
+          #   iter-33v2 run 29204253225 (clang-14 yells at libffi)
+          #   iter-35 run 29205113461 (CC_FOR_BUILD=gcc exported but
+          #     libffi's tune.c uses $CC, not $CC_FOR_BUILD, for this probe
+          #     — hence gcc env passed through and clang probe still failed)
+          # Solution: install a /bin/bash wrapper AT the NDK clang binary
+          # path which returns the synthetic path "../lib" when invoked with
+          # -print-multi-os-directory, and execs the original binary for
+          # every other call. Idempotent (re-runs skip if shim is in place).
+          # Reversible (the .real file is left untouched on disk).
+          CLANG_BIN="${NDK_DIR}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          if [[ -f "${CLANG_BIN}" && ! -f "${CLANG_BIN}.real" ]]; then
+              mv "${CLANG_BIN}" "${CLANG_BIN}.real"
+              cat << 'EOF' > "${CLANG_BIN}"
+          #!/bin/bash
+          # Clang shim (iter-36). Intercept the GCC-only
+          # `-print-multi-os-directory` probe that libffi/openssl/sqlite
+          # configure scripts use to detect multiarch lib dirs. clang-14
+          # rejects it as `unsupported option`; we synthesize the path
+          # `../lib` (the same answer stock GCC gives on Ubuntu). All other
+          # invocations (real cross-compile calls) pass through to .real.
+          for arg in "$@"; do
+              if [[ "${arg}" == "-print-multi-os-directory" ]]; then
+                  echo "../lib"
+                  exit 0
+              fi
+          done
+          SHIM_DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec "${SHIM_DIR}/clang.real" "$@"
+          EOF
+              chmod +x "${CLANG_BIN}"
+              echo "::notice::iter 36 clang shim installed at ${CLANG_BIN}"
+          else
+              echo "::notice::iter 36 clang shim already in place (skipped re-install)"
+          fi
           bash scripts/prepare_cover.sh
           # CRITICAL FIX (iter-35): route `--print-multi-os-directory`-style
           # autoconf probes through HOST gcc instead of NDK clang-14.
