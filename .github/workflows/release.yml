@@ -309,66 +309,45 @@ jobs:
           ln -sfn "${CTV}" "${ANDROIDSDK}/cmdline-tools/latest"
           echo "::notice::Linked ${ANDROIDSDK}/tools -> cmdline-tools/${CTV}"
           echo "::notice::Linked ${ANDROIDSDK}/cmdline-tools/latest -> ${CTV}"
-          # CRITICAL FIX (iteration 32): iter-31's `PIP_CONSTRAINT` env-var
-          # was BYPASSED by p4a's hardcoded `pip3 install ... Cython<3.2
-          # --upgrade` subprocess calls. Iter-31 post-mortem of the run's
-          # buildozer logs confirmed: (a) our `::notice::PIP_CONSTRAINT`
-          # echoed correctly, (b) NO p4a pip invocation passed `--constraint`,
-          # (c) Cython 3.x WAS STILL installed, (d) the same clang signature
-          # `error: too few arguments to function call, expected 6, have 5`
-          # recurred at Cython/Plex/Scanners.c. Pip's `pip3 install ...
-          # --upgrade` apparently either strips inherited env vars in its
-          # subprocess environment OR collapses the resolver onto the
-          # literal user-specified selector when `--upgrade` is present,
-          # ignoring PIP_CONSTRAINT.
-          #
-          # Iter-32 escalation: write BOTH a user-level `~/.pip/pip.conf`
-          # AND (when sudoable) a system-level `/etc/pip.conf`. Pip reads
-          # these config files freshly on EVERY invocation (no env-var
-          # dependency, no startup cache). The `[global]` section is auto-
-          # merged into EVERY pip invocation including p4a's hand-written
-          # upgrade subprocess calls. Two directives MATTER:
-          #
-          #   * `constraint = ...` applies to all package resolutions,
-          #     including user-requested direct installs. Constrained
-          #     versions are tested for SATISFACTION during the user's
-          #     selector match — p4a's `pip3 install ... Cython<3.2
-          #     --upgrade` with `Cython==0.29.36` constraint can only
-          #     pick 0.29.36.
-          #   * `upgrade-strategy = only-if-needed` forces `--upgrade`
-          #     to become a no-op when an existing installation already
-          #     satisfies Cython==0.29.36 — so even if the resolver
-          #     accidentally wanted 3.x, the installed 0.29.36 wins.
-          #
-          # Belt-and-suspenders: `/etc/pip.conf` is the system-wide default
-          # fallback for any subprocess that resets HOME, sets `--isolated`,
-          # or runs as a different UID.
-          mkdir -p "${HOME}/.pip"
-          {
-            echo '[global]'
-            echo 'constraint = /tmp/v32-pip-constraint.txt'
-            echo 'upgrade-strategy = only-if-needed'
-          } > "${HOME}/.pip/pip.conf"
-          echo 'Cython==0.29.36' > /tmp/v32-pip-constraint.txt
-          if command -v sudo >/dev/null 2>&1; then
-            sudo bash -c '
-              echo "[global]"
-              echo "constraint = /tmp/v32-pip-constraint.txt"
-              echo "upgrade-strategy = only-if-needed"
-            ' > /etc/pip.conf 2>/dev/null || true
+          # CRITICAL FIX (iteration 33): neutralize p4a's Cython 3.x hardcodes
+          # by sed-patching a freshly-cloned local python-for-android and
+          # pointing buildozer at our patched clone via `android.p4a_dir`
+          # (set in buildozer.spec). This is the ONLY mechanism that works:
+          # the iter-30 spec pin, iter-31 PIP_CONSTRAINT env var, and
+          # iter-32 pip.conf files were ALL proven ineffective because they
+          # operate OUTSIDE p4a's internal pip subprocess invocation site.
+          # The patched clone's bootstrap `pip3 install ... Cython==0.29.36`
+          # resolves exactly to the version Kivy 2.3.0's `_clock.pyx` was
+          # generated against, sidestepping the varargs/SDL2 mismatch.
+          set -euo pipefail
+          P4A_LOCAL="$(pwd)/.local/python-for-android"
+          rm -rf "${P4A_LOCAL}"
+          git clone --depth 1 --quiet \
+              https://github.com/kivy/python-for-android.git "${P4A_LOCAL}"
+          P4A_SHA=$(git -C "${P4A_LOCAL}" rev-parse --short HEAD)
+          echo "::notice::Cloned p4a (depth=1) @ ${P4A_SHA} → ${P4A_LOCAL}"
+          # Sed-patch BOTH hardcoded selectors to the strict pinned form.
+          # p4a emits these in its own internal recipe bootstrap files
+          # (`pythonforandroid/recipes/{hostpython3,pyjnius-sdl2,...}`);
+          # blanket-rewriting collapses ALL possible resolution paths.
+          find "${P4A_LOCAL}/pythonforandroid" -type f -name '*.py' -exec \
+              sed -i 's/Cython<3\.2/Cython==0.29.36/g' {} +
+          find "${P4A_LOCAL}/pythonforandroid" -type f -name '*.py' -exec \
+              sed -i 's/Cython>=0\.29,<3\.1/Cython==0.29.36/g' {} +
+          # Defensive verification: if either selector survives, the build
+          # would still install Cython 3.x. Fail loud with a distinct exit
+          # code so the post-mortem is unambiguous.
+          REMAINING=$(grep -rnE 'Cython<3\.2|Cython>=0\.29,<3\.1' \
+              "${P4A_LOCAL}/pythonforandroid" 2>/dev/null || true)
+          if [[ -n "${REMAINING}" ]]; then
+              echo "::error::p4a sed-patch FAILED — selectors survived:"
+              echo "${REMAINING}"
+              exit 8
           fi
-          {
-            echo "::notice::iter 32 user-level pip.conf active for this step:"
-            echo "::notice::  HOME=${HOME}"
-            echo "::notice::  pip.conf:"
-            sed 's/^/::notice::    /' "${HOME}/.pip/pip.conf"
-            echo "::notice::  constraint file body:"
-            sed 's/^/::notice::    /' /tmp/v32-pip-constraint.txt
-            if [[ -f /etc/pip.conf ]]; then
-              echo "::notice::  /etc/pip.conf present:"
-              sed 's/^/::notice::    /' /etc/pip.conf
-            fi
-          }
+          # Echo proof-of-life for the patch so it's grep-able in logs.
+          echo "::notice::p4a patched OK: ALL Cython selectors collapsed to ==0.29.36"
+          grep -rn 'Cython==0\.29\.36' "${P4A_LOCAL}/pythonforandroid" \
+              | head -5 | sed 's/^/::notice::    /'
           bash scripts/prepare_cover.sh
           buildozer --verbose android debug \
             arch=${{ matrix.arch }} \

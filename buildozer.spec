@@ -125,6 +125,31 @@ android.sdk_path = /usr/local/lib/android/sdk
 # Local-dev override: replace with the matching NDK dir of your local SDK.
 android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
 
+# CRITICAL FIX (iteration 33): p4a recipe override — THE surgical fix.
+#
+# python-for-android (p4a) emits two hardcoded `pip3 install ... Cython<...>
+# -q --upgrade` subprocess calls in its internal recipe bootstrap. Confirmed
+# at buildozer-x86_64.log lines 19949 + 20130 of run 29196024717 (iter-30):
+#   pip3 install ... Cython<3.2 -q --upgrade             (pyjnius-sdl2 buildout)
+#   pip3 install ... Cython>=0.29,<3.1 -q --upgrade       (android-sdl2 buildout)
+#
+# These calls BYPASS every constraint, env var, and pip.conf set upstream
+# (proven empirically: iter-30 spec pin ignored, iter-31 PIP_CONSTRAINT
+# ignored, iter-32 pip.conf ignored). Cython 3.x gets installed anyway and
+# collides with Kivy 2.3.0's generated `_clock.c` at clang compile, surfacing
+# as `error: too few arguments to function call, expected 6, have 5`.
+#
+# THE surgical fix: the iter-33 release.yml step clones p4a, sed-patches
+# BOTH hardcoded selectors to a strict `Cython==0.29.36` (the exact version
+# Kivy 2.3.0's _clock.pyx was generated against), then points buildozer at
+# the patched clone via this `android.p4a_dir`. Patched p4a's bootstrap
+# resolves OUR selector and CANNOT upgrade past it.
+#
+# The clone lives under source.dir so the same relative path works on local
+# dev (`bash scripts/prepare_cover.sh && buildozer android debug`) after
+# running the same `git clone + sed` from the workflow step manually.
+android.p4a_dir = %(source.dir)s/.local/python-for-android
+
 # CRITICAL FIX (iteration 20):
 # Disable p4a's internal sdkmanager invocation. The p4a wrapper script
 # has a hardcoded classpath that fails to resolve SdkManagerCli when
