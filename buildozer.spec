@@ -123,10 +123,17 @@ android.sdk_path = /usr/local/lib/android/sdk
 # honor our pre-installed r25c (clang 14, binutils GNU) which is the
 # version p4a's recipes are calibrated against.
 # Local-dev override: replace with the matching NDK dir of your local SDK.
-# CRITICAL FIX (iter-34): NDK r23b (23.1.7779620). r25c's clang-14 strictly
-# rejects `--print-multi-os-directory` (autoconf GCC-only probe) → libffi
-# configure crashes pre-build. r23b's clang-12 treats it as a warning.
-android.ndk_path = /usr/local/lib/android/sdk/ndk/23.1.7779620
+# CRITICAL FIX (iter-35): back to NDK r25c (25.2.9519653). p4a strictly
+# requires NDK >= 25 (iter-34's r23b downgrade was rejected with the error
+# `The minimum supported NDK version is 25`). To bypass clang-14's
+# rejection of autoconf's `--print-multi-os-directory` GCC-only probe
+# (used by libffi / openssl configure), the iter-35 release.yml step
+# installs host gcc/g++/build-essential AND exports `CC_FOR_BUILD=gcc`
+# BEFORE the buildozer invocation; p4a's recipes inherit CC_FOR_BUILD
+# which GNU autoconf uses for host-side tooling checks (separately from
+# the cross-compile CC=clang). This keeps clang-14 as the cross-compiler
+# while steering ONLY the broken probe through gcc.
+android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
 
 # CRITICAL FIX (iteration 33): p4a recipe override — THE surgical fix.
 #

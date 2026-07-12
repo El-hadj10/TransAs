@@ -36,14 +36,15 @@ jobs:
     env:
       ANDROIDAPI: 34
       ANDROIDMINAPI: 21
-      # CRITICAL FIX (iter-34): downgrade NDK r25c → r23b.
-      # NDK r25c ships ONLY clang-14 (gcc was removed). clang-14 strictly
-      # rejects autoconf probes like `--print-multi-os-directory` (GCC-only
-      # flag) with exit code 1 → libffi / openssl configure crashes BEFORE
-      # the cross-compile starts (buildozer-x86_64.log line ~9900 of run
-      # 29204253225). NDK r23b bundles clang-12 which treats that probe as
-      # a WARNING and proceeds, unblocking the entire p4a bootstrap chain.
-      ANDROID_NDK_VERSION: 23.1.7779620
+      # CRITICAL FIX (iter-35): restore NDK r25c (25.2.9519653).
+      # p4a strictly requires NDK >= 25 — iter-34's r23b attempt crashed in
+      # 200 s with `The minimum supported NDK version is 25`. To work around
+      # clang-14's strict rejection of autoconf's GCC-only
+      # `--print-multi-os-directory` probe (used by libffi / openssl
+      # configure), the Build APK step now installs host gcc and exports
+      # `CC_FOR_BUILD=gcc` so autoconf's capability probes use gcc instead
+      # of clang while the actual cross-compile still uses NDK clang-14.
+      ANDROID_NDK_VERSION: 25.2.9519653
       # cmdline-tools (a.k.a. "tools") pin — DRY source for both
       # setup-android@v4's input AND the iter-24 alias symlink below.
       # Bump this here to upgrade the whole pipeline; bump-and-forget.
@@ -71,7 +72,15 @@ jobs:
           PKGS=(libffi-dev libssl-dev libsqlite3-dev libpango1.0-dev
                 libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev
                 libgstreamer1.0-dev libunwind-dev libasound2-dev
-                unzip p7zip-full)
+                unzip p7zip-full
+                # CRITICAL FIX (iter-35): host gcc + g++ + build-essential.
+                # NDK r25c ships ONLY clang-14 (no gcc). When autoconf
+                # scripts probe `CC --print-multi-os-directory` to detect
+                # host lib dirs, clang-14 exits with `unsupported option`
+                # instead of returning a path. Export CC_FOR_BUILD=gcc in
+                # the Build APK step so autoconf uses HOST gcc for tooling
+                # capability probes while the cross-compile remains clang-14.
+                gcc g++ build-essential)
           sudo apt-get update -q || (sleep 8 && sudo apt-get update -q)
           sudo apt-get install -y --fix-broken --no-install-recommends "${PKGS[@]}"
           missing=()
@@ -360,6 +369,17 @@ jobs:
           grep -rn 'Cython==0\.29\.36' "${P4A_LOCAL}/pythonforandroid" \
               | head -5 | sed 's/^/::notice::    /'
           bash scripts/prepare_cover.sh
+          # CRITICAL FIX (iter-35): route `--print-multi-os-directory`-style
+          # autoconf probes through HOST gcc instead of NDK clang-14.
+          # CC_FOR_BUILD is the conventional autoconf env var for "compiler
+          # that runs host-side tooling probes" — distinct from CC (the
+          # cross-compiler). GNU autoconf's libFF_CHECK_LONG_DOUBLE / similar
+          # shell probes honor CC_FOR_BUILD only for the host probe parts.
+          # CONFIG_SHELL=/bin/bash sidesteps dash-default issues ubuntu22 has
+          # with complex autoconf variable expansions.
+          export CC_FOR_BUILD="${CC_FOR_BUILD:-gcc}"
+          export CONFIG_SHELL=/bin/bash
+          echo "::notice::iter 35 CC_FOR_BUILD=${CC_FOR_BUILD} CONFIG_SHELL=${CONFIG_SHELL}"
           buildozer --verbose android debug \
             arch=${{ matrix.arch }} \
             2>&1 | tee buildozer-${{ matrix.arch }}.log
