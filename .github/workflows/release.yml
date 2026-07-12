@@ -172,11 +172,34 @@ jobs:
         # minutes of buildozer bootstrapping.
         run: |
           set -euo pipefail
-          SDK="${{ steps.setup_android.outputs.android-home }}"
-          if [[ -z "${SDK}" ]]; then
-            echo "::error::setup-android@v3 returned empty android-home output; cannot bridge to ANDROIDSDK"
+          # Resolve the SDK install dir using a 3-tier source-of-truth so
+          # we don't depend on a single action output/env name. Iterations
+          # 10-13 showed that `steps.setup_android.outputs.android-home`
+          # is sometimes empty (anonymous-runner / action version drift),
+          # yet $ANDROID_HOME is usually available on GitHub-hosted
+          # runners because setup-android writes it via $GITHUB_ENV.
+          SDK=""
+          if [[ -n "${{ steps.setup_android.outputs.android-home }}" ]]; then
+            SDK="${{ steps.setup_android.outputs.android-home }}"
+            SDK_SOURCE='setup_android.outputs.android-home'
+          elif [[ -n "${ANDROID_HOME:-}" ]]; then
+            SDK="${ANDROID_HOME}"
+            SDK_SOURCE='ANDROID_HOME env (set by setup-android via $GITHUB_ENV)'
+          else
+            # GitHub-hosted ubuntu-22.04 runner default Android SDK install
+            # path used by setup-android@v3. Will not exist on self-hosted
+            # runners; we treat that as a hard fail next.
+            SDK='/usr/local/lib/android/sdk'
+            SDK_SOURCE='hardcoded default'
+          fi
+          if [[ -z "${SDK}" || ! -d "${SDK}" ]]; then
+            echo "::error::Could not resolve ANDROIDSDK from any source"
+            echo "::error::  setup_android.outputs.android-home = '${{ steps.setup_android.outputs.android-home }}'"
+            echo "::error::  ANDROID_HOME                  = '${ANDROID_HOME:-<unset>}'"
+            echo "::error::  last-tried path                = '${SDK}' (exists? $([[ -d "${SDK}" ]] && echo yes || echo no))"
             exit 2
           fi
+          echo "::notice::SDK source = ${SDK_SOURCE}"
           # Locate sdkmanager regardless of app-action layout variations.
           # Different runner images + cmdline-tools versions produce
           # different tree structures. We probe in order of preference:
