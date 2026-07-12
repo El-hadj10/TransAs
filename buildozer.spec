@@ -98,6 +98,20 @@ android.minapi = 21
 # "Tell Buildozer where the SDK and JDK live").
 android.sdk_path = /usr/local/lib/android/sdk
 
+# CRITICAL FIX (iteration 26): pin buildozer's NDK path so python-for-android
+# uses the NDK we pre-installed via setup-android@v4 instead of bootstrapping
+# its own. Iter-25 logs (GH Actions run 29191818397) revealed that without
+# this pin, buildozer silently downloaded `android-ndk-r28c` into
+# .buildozer/android/platform/android-ndk-r28c/ - discordant with the
+# env's ANDROID_NDK_VERSION pin (25.2.9519653 / r25c) declared in
+# .github/workflows/release.yml. With mismatched toolchains, p4a's
+# cross-compile of hostpython3 / target-python / Kivy C-extensions crashed
+# clang after ~13 minutes of compile. Pinning here forces buildozer to
+# honor our pre-installed r25c (clang 14, binutils GNU) which is the
+# version p4a's recipes are calibrated against.
+# Local-dev override: replace with the matching NDK dir of your local SDK.
+android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
+
 # CRITICAL FIX (iteration 20):
 # Disable p4a's internal sdkmanager invocation. The p4a wrapper script
 # has a hardcoded classpath that fails to resolve SdkManagerCli when
