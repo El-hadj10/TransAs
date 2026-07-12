@@ -1,14 +1,5 @@
 name: Build & Release TransAs APK
 
-# Triggers:
-#   - Tag push matching v* (e.g. v0.1, v0.1.2): builds + uploads to Releases.
-#   - Manual dispatch via the "Run workflow" button: dry-run build only, never
-#     publishes. The input form lets the maintainer test the build pipeline
-#     without burning a real tag.
-#
-# Implements Path A (sideload via GitHub Releases) from the F-Droid
-# distribution strategy doc.
-
 on:
   push:
     tags:
@@ -20,7 +11,6 @@ on:
         type: boolean
         default: false
 
-# Avoid wasting parallel runners
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -50,11 +40,9 @@ jobs:
       KEYSTORE_FILE: ${{ github.workspace }}/transas-release.jks
 
     steps:
-      # 1. Pull source
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # 2. Toolchain (JAVA_HOME explicitly exported via actions/setup-java)
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
@@ -93,28 +81,29 @@ jobs:
           python -m pip install --upgrade pip wheel
           pip install 'Cython>=0.29.36,<3.0.0' buildozer
 
-      # 3. Android SDK - UPGRADED to v4 (fixes empty android-home bug)
+      # 3. Android SDK - Using v4 with CORRECT inputs
       - name: Setup Android SDK
         id: setup_android
         uses: android-actions/setup-android@v4
         with:
-          api-level: ${{ env.ANDROIDAPI }}
-          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
-          build-tools-version: 34.0.0
+          cmdline-tools-version: 13114758
+          packages: >-
+            platform-tools
+            platforms;android-${{ env.ANDROIDAPI }}
+            build-tools;34.0.0
+            ndk;${{ env.ANDROID_NDK_VERSION }}
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: true
 
       - name: Expose Android SDK paths for buildozer / p4a / Gradle
         id: expose_sdk
         run: |
           set -euo pipefail
-          # Try the action's output first, then fallback to ANDROID_HOME
-          SDK="${{ steps.setup_android.outputs.android-home }}"
-          if [[ -z "${SDK}" ]]; then
-            echo "::warning::action output empty, using ANDROID_HOME"
-            SDK="${ANDROID_HOME:-}"
-          fi
+          # v4 sets ANDROID_HOME in the environment
+          SDK="${ANDROID_HOME:-}"
           
           if [[ -z "${SDK}" ]]; then
-            echo "::error::Could not determine Android SDK path"
+            echo "::error::ANDROID_HOME not set by setup-android@v4"
             exit 2
           fi
           
@@ -143,7 +132,6 @@ jobs:
           echo "::notice::✓ ANDROIDSDK=${SDK}"
           echo "::notice::✓ ANDROIDNDK=${SDK}/ndk/${ANDROID_NDK_VERSION}"
 
-      # 4. Decode the release keystore from a GitHub Secret (real tag push only)
       - name: Decode release keystore from secret (soft-fail)
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
@@ -169,7 +157,6 @@ jobs:
           echo "HAS_KEYSTORE=true" >> "$GITHUB_ENV"
           echo "::notice::Release keystore OK"
 
-      # 4b. Activate release signing in buildozer.spec
       - name: Activate release signing in buildozer.spec
         if: env.HAS_KEYSTORE == 'true'
         run: |
@@ -183,7 +170,6 @@ jobs:
             exit 3
           }
 
-      # 5. Build the APK
       - name: Build APK (${{ matrix.arch }})
         env:
           ANDROIDSDK: ${{ env.ANDROIDSDK }}
@@ -207,7 +193,6 @@ jobs:
             exit "$rc"
           fi
 
-      # 6. Locate the produced APK
       - name: Find built APK
         id: find_apk
         run: |
@@ -221,7 +206,6 @@ jobs:
           echo "apk_path=${APK}" >> "$GITHUB_OUTPUT"
           echo "Built APK: ${APK}  ($(du -h "${APK}" | cut -f1))"
 
-      # 7. Verify signature + badging (only on real tag push)
       - name: Verify APK signature and badging
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
@@ -231,7 +215,6 @@ jobs:
           apksigner verify -v "${APK}"
           aapt2 dump badging "${APK}" 2>/dev/null | head -10
 
-      # 8. Upload to GitHub Releases
       - name: Upload APK to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -244,7 +227,6 @@ jobs:
             ${{ steps.find_apk.outputs.apk_path }}
             buildozer-${{ matrix.arch }}.log
 
-      # 9. Upload APK as build artifact
       - name: Upload APK as build artifact
         uses: actions/upload-artifact@v4
         with:
