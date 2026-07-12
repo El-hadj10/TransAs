@@ -122,9 +122,18 @@ jobs:
       # brittle on ubuntu-22.04 runners (ClassNotFoundException for
       # SdkManagerCli despite a successful extraction — Google's zip
       # layout or shell-wrapper internals changed).
+      #
+      # Pin `cmdline-tools-version: 13114758` (14.0) explicitly: Google's
+      # cmdline-tools 15+ removed the `SdkManagerCli` class that
+      # setup-android@v3's internal sdkmanager script still references.
+      # 14.0 is the last revision that ships the class. Newer revs of the
+      # action default to 14742923 (16.0) which reproduces the failure on
+      # JDK 17. Build-tools 34.0.0 + platforms;android-34 + NDK 26d are all
+      # compatible with cmdline-tools 14.0.
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
+          cmdline-tools-version: 13114758
           packages: >-
             platform-tools
             platforms;android-${{ env.ANDROIDAPI }}
