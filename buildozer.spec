@@ -123,7 +123,10 @@ android.sdk_path = /usr/local/lib/android/sdk
 # honor our pre-installed r25c (clang 14, binutils GNU) which is the
 # version p4a's recipes are calibrated against.
 # Local-dev override: replace with the matching NDK dir of your local SDK.
-android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
+# CRITICAL FIX (iter-34): NDK r23b (23.1.7779620). r25c's clang-14 strictly
+# rejects `--print-multi-os-directory` (autoconf GCC-only probe) → libffi
+# configure crashes pre-build. r23b's clang-12 treats it as a warning.
+android.ndk_path = /usr/local/lib/android/sdk/ndk/23.1.7779620
 
 # CRITICAL FIX (iteration 33): p4a recipe override — THE surgical fix.
 #

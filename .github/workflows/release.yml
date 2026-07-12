@@ -36,7 +36,14 @@ jobs:
     env:
       ANDROIDAPI: 34
       ANDROIDMINAPI: 21
-      ANDROID_NDK_VERSION: 25.2.9519653
+      # CRITICAL FIX (iter-34): downgrade NDK r25c → r23b.
+      # NDK r25c ships ONLY clang-14 (gcc was removed). clang-14 strictly
+      # rejects autoconf probes like `--print-multi-os-directory` (GCC-only
+      # flag) with exit code 1 → libffi / openssl configure crashes BEFORE
+      # the cross-compile starts (buildozer-x86_64.log line ~9900 of run
+      # 29204253225). NDK r23b bundles clang-12 which treats that probe as
+      # a WARNING and proceeds, unblocking the entire p4a bootstrap chain.
+      ANDROID_NDK_VERSION: 23.1.7779620
       # cmdline-tools (a.k.a. "tools") pin — DRY source for both
       # setup-android@v4's input AND the iter-24 alias symlink below.
       # Bump this here to upgrade the whole pipeline; bump-and-forget.
