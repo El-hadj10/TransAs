@@ -309,6 +309,33 @@ jobs:
           ln -sfn "${CTV}" "${ANDROIDSDK}/cmdline-tools/latest"
           echo "::notice::Linked ${ANDROIDSDK}/tools -> cmdline-tools/${CTV}"
           echo "::notice::Linked ${ANDROIDSDK}/cmdline-tools/latest -> ${CTV}"
+          # CRITICAL FIX (iteration 31): Python for Android bakes its own
+          # `pip3 install ... Cython<3.2 -q --upgrade` (during pyjnius-sdl2
+          # recipe build) and `pip3 install ... Cython>=0.29,<3.1 -q --upgrade`
+          # (during android-sdl2 recipe build) commands into its recipe
+          # bootstrap — verified in iter-30 buildozer logs at lines
+          # 19949 and 20130 of buildozer-x86_64.log. These silently
+          # clobber any `cython==0.29.36` entry we put in buildozer.spec's
+          # `requirements` line (p4a installs Cython 3.1.8 from its own
+          # `Cython<3.2` selector), causing the `error: too few arguments
+          # to function call, expected 6, have 5` clang fallback at
+          # Cython/Plex/Scanners.c (and, before the pin, at kivy/_clock.c).
+          #
+          # Surgery: PIP_CONSTRAINT = a temp file containing exactly
+          # `Cython==0.29.36`. Pip forbids installing any version that
+          # does not satisfy all PEP 440 constraints in PIP_CONSTRAINT,
+          # even under `--upgrade` (which by default uses
+          # `--upgrade-strategy only-if-needed` since pip 22.x). Every
+          # pip subprocess — including p4a's exact hand-written upgrade
+          # commands — collapses its Cython selector onto this single
+          # version. Belt-and-suspenders to the buildozer.spec entry
+          # (which p4a ignores but the host buildozer python respects).
+          echo "Cython==0.29.36" > /tmp/v31-pip-constraint.txt
+          export PIP_CONSTRAINT=/tmp/v31-pip-constraint.txt
+          {
+            echo "::notice::PIP_CONSTRAINT active for this step (iter 31):"
+            sed 's/^/::notice::  /' "${PIP_CONSTRAINT}"
+          }
           bash scripts/prepare_cover.sh
           buildozer --verbose android debug \
             arch=${{ matrix.arch }} \
