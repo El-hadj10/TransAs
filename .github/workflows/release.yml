@@ -46,13 +46,7 @@ jobs:
     env:
       ANDROIDAPI: 34
       ANDROIDMINAPI: 21
-      # Source of truth for the Android NDK version. The community
-      # `android-actions/setup-android@v3` action downloads it via the
-      # `ndk;${ANDROID_NDK_VERSION}` package spec; buildozer needs an
-      # absolute directory path, which we set in the Build APK step env
-      # below (since $ANDROIDSDK isn't known until that earlier step).
       ANDROID_NDK_VERSION: 26.3.11579264
-      # No ANDROIDSDK here — set instead by the Setup Android SDK step.
       KEYSTORE_FILE: ${{ github.workspace }}/transas-release.jks
 
     steps:
@@ -75,27 +69,12 @@ jobs:
       - name: Install Linux host build libraries (Kivy SDL2 stack)
         run: |
           set -euo pipefail
-          # Kivy 2.3 / p4a needs the SDL2 + Pango stack. p7zip-full is the
-          # canonical name on ubuntu-22.04 (the bare `7zip` alias only exists
-          # on 24.04+). libunwind-dev is a transitive dep of
-          # libgstreamer1.0-dev — pinning it explicitly avoids the
-          # held-broken state seen on fresh runner images.
           PKGS=(libffi-dev libssl-dev libsqlite3-dev libpango1.0-dev
                 libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev
                 libgstreamer1.0-dev libunwind-dev libasound2-dev
                 unzip p7zip-full)
-          # Retry apt-get update once on transient mirror failures
-          # (GitHub shared runners occasionally 503 under load).
           sudo apt-get update -q || (sleep 8 && sudo apt-get update -q)
-          # Single install call: --fix-broken repairs anything previously
-          # held on the runner, then the explicit PKGS list is installed in
-          # one shot — avoids the ABI churn of two separate install rounds.
           sudo apt-get install -y --fix-broken --no-install-recommends "${PKGS[@]}"
-          # Real sanity check: dpkg-query -W exits non-zero on unknown
-          # packages, AND we assert the Status field reads "install ok
-          # installed" — so absent or half-installed packages fail loud.
-          # We use `if` (not `!`) so set -e doesn't bail at the FIRST
-          # missing package — we want the full list of bad packages.
           missing=()
           for p in "${PKGS[@]}"; do
             if ! dpkg-query -W -f='${Status}' "$p" 2>/dev/null \
@@ -112,174 +91,85 @@ jobs:
       - name: Install Python deps (Cython pin + buildozer)
         run: |
           python -m pip install --upgrade pip wheel
-          # Kivy 2.3 recipes break on Cython 3.x ABI; pin to 0.29.x.
           pip install 'Cython>=0.29.36,<3.0.0' buildozer
 
-      # 3. Android SDK
-      # Use the community-maintained `android-actions/setup-android@v3` to
-      # download cmdline-tools, accept SDK licenses and install the
-      # required components. The previous manual curl/unzip pattern was
-      # brittle on ubuntu-22.04 runners (ClassNotFoundException for
-      # SdkManagerCli despite a successful extraction — Google's zip
-      # layout or shell-wrapper internals changed).
-      #
-      # Pin `cmdline-tools-version: 13114758` (14.0) explicitly: Google's
-      # cmdline-tools 15+ removed the `SdkManagerCli` class that
-      # setup-android@v3's internal sdkmanager script still references.
-      # 14.0 is the last revision that ships the class. Newer revs of the
-      # action default to 14742923 (16.0) which reproduces the failure on
-      # JDK 17. Build-tools 34.0.0 + platforms;android-34 + NDK 26d are all
-      # compatible with cmdline-tools 14.0.
-      # CRITICAL FIX (iteration 10):
-      # 1. Give this step an `id` so we can read its `android-home`
-      #    output from a downstream step using the canonical upgrade path.
-      #    Previously we relied on $ANDROID_HOME leaking into the next
-      #    step's env, which on iteration 10 did NOT happen (the variable
-      #    was empty by the time the Expose step ran), causing
-      #    python-for-android to write its sdkmanager path as a literal
-      #    `/.../$ANDROIDSDK/tools/bin/sdkmanager` placeholder and crash
-      #    with a misleading ClassNotFoundException for SdkManagerCli.
-      # 2. Pin cmdline-tools-version: 13114758 (14.0) — last revision
-      #    of cmdline-tools that still ships the SdkManagerCli class.
-      #    cmdline-tools 15+ removed that class.
+      # 3. Android SDK - UPGRADED to v4 (fixes empty android-home bug)
       - name: Setup Android SDK
         id: setup_android
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
-          cmdline-tools-version: 13114758
-          packages: >-
-            platform-tools
-            platforms;android-${{ env.ANDROIDAPI }}
-            build-tools;34.0.0
-            ndk;${{ env.ANDROID_NDK_VERSION }}
+          api-level: ${{ env.ANDROIDAPI }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          build-tools-version: 34.0.0
 
       - name: Expose Android SDK paths for buildozer / p4a / Gradle
         id: expose_sdk
-        # We resolve the SDK directory from the action's canonical
-        # `android-home` output (NOT from a stale $ANDROID_HOME) and
-        # mirror it under EVERY env name downstream tools may read:
-        #   - ANDROIDSDK      → buildozer build.py (the one that p4a calls)
-        #   - ANDROID_HOME    → legacy tooling, gradle-plugin pre-7
-        #   - ANDROID_SDK_ROOT→ Android Gradle Plugin 7+ AND sdkmanager invocations
-        # This guarantees that whatever name the subprocess looks up,
-        # the SDK directory resolves to the same canonical path.
-        # We also pre-compute ANDROIDNDK as an absolute path because
-        # buildozer / p4a reject bare version strings
-        # (`Android NDK not found at ...`).
-        # Finally, we sanity-check that `cmdline-tools-version: 13114758`
-        # did take effect: if cmdline-tools/latest/bin/sdkmanager is not
-        # executable, we fail loud RIGHT HERE instead of after several
-        # minutes of buildozer bootstrapping.
         run: |
           set -euo pipefail
-          # Resolve the SDK install dir using a 3-tier source-of-truth so
-          # we don't depend on a single action output/env name. Iterations
-          # 10-13 showed that `steps.setup_android.outputs.android-home`
-          # is sometimes empty (anonymous-runner / action version drift),
-          # yet $ANDROID_HOME is usually available on GitHub-hosted
-          # runners because setup-android writes it via $GITHUB_ENV.
-          SDK=""
-          if [[ -n "${{ steps.setup_android.outputs.android-home }}" ]]; then
-            SDK="${{ steps.setup_android.outputs.android-home }}"
-            SDK_SOURCE='setup_android.outputs.android-home'
-          elif [[ -n "${ANDROID_HOME:-}" ]]; then
-            SDK="${ANDROID_HOME}"
-            SDK_SOURCE='ANDROID_HOME env (set by setup-android via $GITHUB_ENV)'
-          else
-            # GitHub-hosted ubuntu-22.04 runner default Android SDK install
-            # path used by setup-android@v3. Will not exist on self-hosted
-            # runners; we treat that as a hard fail next.
-            SDK='/usr/local/lib/android/sdk'
-            SDK_SOURCE='hardcoded default'
+          # Try the action's output first, then fallback to ANDROID_HOME
+          SDK="${{ steps.setup_android.outputs.android-home }}"
+          if [[ -z "${SDK}" ]]; then
+            echo "::warning::action output empty, using ANDROID_HOME"
+            SDK="${ANDROID_HOME:-}"
           fi
-          if [[ -z "${SDK}" || ! -d "${SDK}" ]]; then
-            echo "::error::Could not resolve ANDROIDSDK from any source"
-            echo "::error::  setup_android.outputs.android-home = '${{ steps.setup_android.outputs.android-home }}'"
-            echo "::error::  ANDROID_HOME                  = '${ANDROID_HOME:-<unset>}'"
-            echo "::error::  last-tried path                = '${SDK}' (exists? $([[ -d "${SDK}" ]] && echo yes || echo no))"
+          
+          if [[ -z "${SDK}" ]]; then
+            echo "::error::Could not determine Android SDK path"
             exit 2
           fi
-          echo "::notice::SDK source = ${SDK_SOURCE}"
-          # Locate sdkmanager regardless of app-action layout variations.
-          # Different runner images + cmdline-tools versions produce
-          # different tree structures. We probe in order of preference:
-          #   1. `cmdline-tools/latest/bin/sdkmanager`  (canonical symlink)
-          #   2. any `cmdline-tools/*/bin/sdkmanager`   (build-numbered subdir)
-          #   3. recursive `find` for any `sdkmanager` under ${SDK}
-          #      (covers the legacy `tools/bin/sdkmanager` layout AND any
-          #       future restructured layout the action may adopt)
-          SDKMANAGER_BIN=""
-          if [[ -x "${SDK}/cmdline-tools/latest/bin/sdkmanager" ]]; then
-            SDKMANAGER_BIN="${SDK}/cmdline-tools/latest/bin/sdkmanager"
-          fi
-          if [[ -z "${SDKMANAGER_BIN}" || ! -x "${SDKMANAGER_BIN}" ]]; then
-            SDKMANAGER_BIN=$(ls -1d "${SDK}/cmdline-tools"/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1 || true)
-          fi
-          if [[ -z "${SDKMANAGER_BIN}" || ! -x "${SDKMANAGER_BIN}" ]]; then
-            SDKMANAGER_BIN=$(find "${SDK}" -type f -name sdkmanager -executable 2>/dev/null | head -n 1 || true)
-          fi
-          if [[ -z "${SDKMANAGER_BIN}" || ! -x "${SDKMANAGER_BIN}" ]]; then
-            echo "::error::Could not find an executable sdkmanager under ${SDK}"
-            echo "::error::the cmdline-tools-version: 13114758 pin likely failed silently"
-            echo "::error::top-level dump of ${SDK}/cmdline-tools/:"
-            ls -la "${SDK}/cmdline-tools/" 2>/dev/null || true
-            echo "::error::recursive lookup for any 'sdkmanager*' under ${SDK} (maxdepth 6, first 30):"
-            find "${SDK}" -maxdepth 6 -name 'sdkmanager*' 2>/dev/null | head -30 || true
+          
+          echo "::notice::Using Android SDK at: ${SDK}"
+          
+          # Verify key directories exist
+          if [[ ! -d "${SDK}/platforms" ]]; then
+            echo "::error::${SDK}/platforms not found"
+            ls -la "${SDK}/" || true
             exit 3
           fi
-          # Sanity confirmed — NOW we can publish env vars safely.
-          # If we wrote to $GITHUB_ENV before the sanity check, a failing
-          # check would still leave the half-applied vars in scope for
-          # downstream steps (an unprincipled half-state). Doing it
-          # afterwards guarantees the vars either land intact, or not at all.
+          
+          if [[ ! -d "${SDK}/ndk/${ANDROID_NDK_VERSION}" ]]; then
+            echo "::error::NDK ${ANDROID_NDK_VERSION} not found in ${SDK}/ndk"
+            echo "::notice::Available NDKs:"
+            ls -la "${SDK}/ndk/" || true
+            exit 4
+          fi
+          
+          # Export all SDK paths
           echo "ANDROIDSDK=${SDK}"        >> "$GITHUB_ENV"
           echo "ANDROID_HOME=${SDK}"      >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=${SDK}"  >> "$GITHUB_ENV"
           echo "ANDROIDNDK=${SDK}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
-          {
-            echo "::notice::ANDROIDSDK      = ${SDK}"
-            echo "::notice::ANDROID_HOME    = ${SDK}"
-            echo "::notice::ANDROID_SDK_ROOT= ${SDK}"
-            echo "::notice::ANDROIDNDK      = ${SDK}/ndk/${ANDROID_NDK_VERSION}"
-            echo "::notice::sdkmanager      = ${SDKMANAGER_BIN}"
-          }
+          
+          echo "::notice::✓ ANDROIDSDK=${SDK}"
+          echo "::notice::✓ ANDROIDNDK=${SDK}/ndk/${ANDROID_NDK_VERSION}"
 
       # 4. Decode the release keystore from a GitHub Secret (real tag push only)
-      # DEFENSIVE: this step is non-fatal. If the secrets are missing or the
-      # password doesn't unlock the keystore, we set HAS_KEYSTORE=false and
-      # continue. buildozer will fall back to its debug keystore (still
-      # producing a valid-but-unsigned APK), which lets us isolate whether
-      # the *rest* of the pipeline works. The next round will re-add the
-      # correct secrets.
       - name: Decode release keystore from secret (soft-fail)
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          set +e  # soft-fail mode: do NOT exit on secrets issue
+          set +e
           if [[ -z "${KEYSTORE_BASE64:-}" ]]; then
-            echo "::warning::secret KEYSTORE_BASE64 is missing — continuing without release signing." >&2
+            echo "::warning::KEYSTORE_BASE64 missing — continuing without release signing"
             echo "HAS_KEYSTORE=false" >> "$GITHUB_ENV"
             exit 0
           fi
           echo "${KEYSTORE_BASE64}" | base64 -d > "${KEYSTORE_FILE}" || {
-            echo "::warning::base64 decode of KEYSTORE_BASE64 failed — continuing." >&2
+            echo "::warning::base64 decode failed — continuing"
             echo "HAS_KEYSTORE=false" >> "$GITHUB_ENV"; exit 0
-          }
+          fi
           chmod 600 "${KEYSTORE_FILE}"
           if ! keytool -list -v -keystore "${KEYSTORE_FILE}" \
               -storepass "${{ secrets.KEYSTORE_PASSWORD }}" >/dev/null 2>&1; then
-            echo "::warning::keystore unlock with KEYSTORE_PASSWORD failed — continuing." >&2
+            echo "::warning::keystore unlock failed — continuing"
             echo "HAS_KEYSTORE=false" >> "$GITHUB_ENV"
             exit 0
           fi
           echo "HAS_KEYSTORE=true" >> "$GITHUB_ENV"
-          echo "::notice::Release keystore decoded & unlocked OK."
+          echo "::notice::Release keystore OK"
 
-      # 4b. Activate android.keystore + android.keyalias in buildozer.spec
-      # We ship those lines commented-out by default so casual readers of
-      # buildozer.spec don't accidentally ship with a real keystore. CI
-      # activates them only when the keystore was successfully decoded above.
+      # 4b. Activate release signing in buildozer.spec
       - name: Activate release signing in buildozer.spec
         if: env.HAS_KEYSTORE == 'true'
         run: |
@@ -288,9 +178,8 @@ jobs:
             -e 's|^# android\.keystore = .*|android.keystore = %(source.dir)s/transas-release.jks|' \
             -e 's|^# android\.keyalias = .*|android.keyalias = transas|' \
             buildozer.spec
-          echo "-- Active lines after sed:"
           grep -E '^\s*android\.(keystore|keyalias)' buildozer.spec || {
-            echo "::error::sed did not activate the keystore lines. Check buildozer.spec format." >&2
+            echo "::error::sed did not activate keystore lines"
             exit 3
           }
 
@@ -301,27 +190,20 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
           ANDROIDAPI: ${{ env.ANDROIDAPI }}
-          # ANDROIDNDK is pre-computed (absolute path) by the Expose SDK step
-          # above, so we just reference it. Fall back to deriving from
-          # $ANDROIDSDK in case the Expose step didn't run for some reason
-          # (defense in depth; the primary source is the pre-computed value).
           ANDROIDNDK: ${{ env.ANDROIDNDK }}
           P4A_RELEASE_KEYSTORE: ${{ env.KEYSTORE_FILE }}
           P4A_RELEASE_KEYALIAS: ${{ secrets.KEY_ALIAS }}
           P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.KEYSTORE_PASSWORD }}
           P4A_RELEASE_KEY_PASSWD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          set -o pipefail  # forward buildozer failures through `tee` — GH Actions
-                            # shell already enables this by default, but make it
-                            # explicit so a future shell-default change can't bite us.
-          bash scripts/prepare_cover.sh   # cover/icon.jpg (idempotent)
+          set -o pipefail
+          bash scripts/prepare_cover.sh
           buildozer --verbose android debug \
             arch=${{ matrix.arch }} \
             2>&1 | tee buildozer-${{ matrix.arch }}.log
           rc=${PIPESTATUS[0]}
           if [[ "$rc" -ne 0 ]]; then
             echo "::error::buildozer exited with status $rc — APK NOT produced"
-            echo "::error::see buildozer-${{ matrix.arch }}.log full output (uploaded as artifact)"
             exit "$rc"
           fi
 
@@ -332,7 +214,7 @@ jobs:
           APK=$(find bin -maxdepth 1 -name "transas-*.apk" \
                   -path "*${{ matrix.arch }}*" -print -quit)
           if [[ -z "${APK}" ]]; then
-            echo "::error::No APK found for arch=${{ matrix.arch }} under bin/" >&2
+            echo "::error::No APK found for arch=${{ matrix.arch }} under bin/"
             ls -la bin/ || true
             exit 1
           fi
@@ -342,7 +224,6 @@ jobs:
       # 7. Verify signature + badging (only on real tag push)
       - name: Verify APK signature and badging
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        id: verify
         env:
           PATH: ${{ env.ANDROIDSDK }}/build-tools/34.0.0:${{ env.PATH }}
         run: |
@@ -350,10 +231,7 @@ jobs:
           apksigner verify -v "${APK}"
           aapt2 dump badging "${APK}" 2>/dev/null | head -10
 
-      # 8. Upload to GitHub Releases (real tag push ONLY)
-      # workflow_dispatch never reaches this step: dispatch is dry-run by
-      # design (the input form lets maintainers test CI without burning a
-      # public release slot).
+      # 8. Upload to GitHub Releases
       - name: Upload APK to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -366,7 +244,7 @@ jobs:
             ${{ steps.find_apk.outputs.apk_path }}
             buildozer-${{ matrix.arch }}.log
 
-      # 9. Always upload the APK as a build artifact (for ad-hoc inspection)
+      # 9. Upload APK as build artifact
       - name: Upload APK as build artifact
         uses: actions/upload-artifact@v4
         with:
