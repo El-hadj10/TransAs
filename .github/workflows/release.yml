@@ -210,12 +210,27 @@ jobs:
           # and emits the misleading SdkManagerCli ClassNotFoundException.
           export ANDROIDSDK="${ANDROID_HOME}"
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          # CRITICAL FIX (iteration 27): force-export the NDK env vars so
+          # buildozer / python-for-android honor OUR pre-installed r25c instead
+          # of auto-bootstrapping r27/r28c into .buildozer/android/platform/.
+          # Iter-26 (commit b753c10) confirmed that `android.ndk_path = ...`
+          # in buildozer.spec was INSUFFICIENT — buildozer ended up
+          # cross-compiling with NDK 27.3.13750724 despite our spec pin.
+          # Env-var override at the bash level carries HIGHER precedence
+          # than spec properties in both buildozer and p4a. Belt-and-
+          # suspenders: ANDROIDNDK (buildozer convention), P4A_NDK_DIR
+          # (current p4a convention), AND ANDROID_NDK (legacy p4a env).
+          export ANDROIDNDK="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export P4A_NDK_DIR="${ANDROIDNDK}"
+          export ANDROID_NDK="${ANDROIDNDK}"
           {
             echo "::notice::Build APK environment:"
             echo "::notice::  ANDROIDSDK      = ${ANDROIDSDK}"
             echo "::notice::  ANDROID_HOME    = ${ANDROID_HOME}"
             echo "::notice::  ANDROID_SDK_ROOT= ${ANDROID_SDK_ROOT}"
             echo "::notice::  ANDROIDNDK      = ${ANDROIDNDK}"
+            echo "::notice::  P4A_NDK_DIR     = ${P4A_NDK_DIR}"
+            echo "::notice::  ANDROID_NDK     = ${ANDROID_NDK}"
             echo "::notice::  CTV             = ${CMDLINE_TOOLS_VERSION}"
             echo "::notice::  matrix.arch     = ${{ matrix.arch }}"
           }
@@ -306,11 +321,16 @@ jobs:
             ${{ steps.find_apk.outputs.apk_path }}
             buildozer-${{ matrix.arch }}.log
 
-      - name: Upload APK as build artifact
+      # CRITICAL FIX (iteration 27): upload even on failure so we capture
+      # buildozer-$arch.log for post-mortem. Without `if: always()` AND
+      # `if-no-files-found: warn`, the buildozer log is lost whenever
+      # buildozer crashes (and we can't diagnose the next failure layer).
+      - name: Upload build artifacts (APK + buildozer log; survives failure)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: transas-${{ matrix.arch }}-${{ github.ref_name }}
           path: |
             ${{ steps.find_apk.outputs.apk_path }}
             buildozer-${{ matrix.arch }}.log
-          if-no-files-found: error
+          if-no-files-found: warn
