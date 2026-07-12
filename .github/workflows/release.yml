@@ -214,6 +214,23 @@ jobs:
             echo "::notice::  ANDROIDNDK      = ${ANDROIDNDK}"
             echo "::notice::  matrix.arch     = ${{ matrix.arch }}"
           }
+          # CRITICAL FIX (iteration 23):
+          # setup-android@v4 installs cmdline-tools under a versioned
+          # directory (${ANDROIDSDK}/cmdline-tools/13114758/...). But
+          # python-for-android's pre-flight check that runs BEFORE
+          # `android.skip_update` has any effect expects the modern
+          # "latest" layout (${ANDROIDSDK}/cmdline-tools/latest/bin/
+          # sdkmanager) and aborts loudly otherwise:
+          #   sdkmanager path "<sdk>/tools/bin/sdkmanager" does not exist
+          # Adding the alias symlink below satisfies p4a's expectation
+          # without touching the @v4-installed bits. The cmdline-tools
+          # wrapper script resolves `../lib/...` JARs RELATIVE TO ITS
+          # OWN DIRECTORY, so we symlink the WHOLE versioned directory,
+          # not just the sdkmanager binary — that preserves classpath
+          # resolution and prevents the ClassNotFoundException
+          # resurface.
+          ln -sfn 13114758 "${ANDROIDSDK}/cmdline-tools/latest"
+          echo "::notice::Linked ${ANDROIDSDK}/cmdline-tools/latest -> 13114758"
           bash scripts/prepare_cover.sh
           buildozer --verbose android debug \
             arch=${{ matrix.arch }} \
