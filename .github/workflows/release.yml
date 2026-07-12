@@ -309,32 +309,65 @@ jobs:
           ln -sfn "${CTV}" "${ANDROIDSDK}/cmdline-tools/latest"
           echo "::notice::Linked ${ANDROIDSDK}/tools -> cmdline-tools/${CTV}"
           echo "::notice::Linked ${ANDROIDSDK}/cmdline-tools/latest -> ${CTV}"
-          # CRITICAL FIX (iteration 31): Python for Android bakes its own
-          # `pip3 install ... Cython<3.2 -q --upgrade` (during pyjnius-sdl2
-          # recipe build) and `pip3 install ... Cython>=0.29,<3.1 -q --upgrade`
-          # (during android-sdl2 recipe build) commands into its recipe
-          # bootstrap — verified in iter-30 buildozer logs at lines
-          # 19949 and 20130 of buildozer-x86_64.log. These silently
-          # clobber any `cython==0.29.36` entry we put in buildozer.spec's
-          # `requirements` line (p4a installs Cython 3.1.8 from its own
-          # `Cython<3.2` selector), causing the `error: too few arguments
-          # to function call, expected 6, have 5` clang fallback at
-          # Cython/Plex/Scanners.c (and, before the pin, at kivy/_clock.c).
+          # CRITICAL FIX (iteration 32): iter-31's `PIP_CONSTRAINT` env-var
+          # was BYPASSED by p4a's hardcoded `pip3 install ... Cython<3.2
+          # --upgrade` subprocess calls. Iter-31 post-mortem of the run's
+          # buildozer logs confirmed: (a) our `::notice::PIP_CONSTRAINT`
+          # echoed correctly, (b) NO p4a pip invocation passed `--constraint`,
+          # (c) Cython 3.x WAS STILL installed, (d) the same clang signature
+          # `error: too few arguments to function call, expected 6, have 5`
+          # recurred at Cython/Plex/Scanners.c. Pip's `pip3 install ...
+          # --upgrade` apparently either strips inherited env vars in its
+          # subprocess environment OR collapses the resolver onto the
+          # literal user-specified selector when `--upgrade` is present,
+          # ignoring PIP_CONSTRAINT.
           #
-          # Surgery: PIP_CONSTRAINT = a temp file containing exactly
-          # `Cython==0.29.36`. Pip forbids installing any version that
-          # does not satisfy all PEP 440 constraints in PIP_CONSTRAINT,
-          # even under `--upgrade` (which by default uses
-          # `--upgrade-strategy only-if-needed` since pip 22.x). Every
-          # pip subprocess — including p4a's exact hand-written upgrade
-          # commands — collapses its Cython selector onto this single
-          # version. Belt-and-suspenders to the buildozer.spec entry
-          # (which p4a ignores but the host buildozer python respects).
-          echo "Cython==0.29.36" > /tmp/v31-pip-constraint.txt
-          export PIP_CONSTRAINT=/tmp/v31-pip-constraint.txt
+          # Iter-32 escalation: write BOTH a user-level `~/.pip/pip.conf`
+          # AND (when sudoable) a system-level `/etc/pip.conf`. Pip reads
+          # these config files freshly on EVERY invocation (no env-var
+          # dependency, no startup cache). The `[global]` section is auto-
+          # merged into EVERY pip invocation including p4a's hand-written
+          # upgrade subprocess calls. Two directives MATTER:
+          #
+          #   * `constraint = ...` applies to all package resolutions,
+          #     including user-requested direct installs. Constrained
+          #     versions are tested for SATISFACTION during the user's
+          #     selector match — p4a's `pip3 install ... Cython<3.2
+          #     --upgrade` with `Cython==0.29.36` constraint can only
+          #     pick 0.29.36.
+          #   * `upgrade-strategy = only-if-needed` forces `--upgrade`
+          #     to become a no-op when an existing installation already
+          #     satisfies Cython==0.29.36 — so even if the resolver
+          #     accidentally wanted 3.x, the installed 0.29.36 wins.
+          #
+          # Belt-and-suspenders: `/etc/pip.conf` is the system-wide default
+          # fallback for any subprocess that resets HOME, sets `--isolated`,
+          # or runs as a different UID.
+          mkdir -p "${HOME}/.pip"
           {
-            echo "::notice::PIP_CONSTRAINT active for this step (iter 31):"
-            sed 's/^/::notice::  /' "${PIP_CONSTRAINT}"
+            echo '[global]'
+            echo 'constraint = /tmp/v32-pip-constraint.txt'
+            echo 'upgrade-strategy = only-if-needed'
+          } > "${HOME}/.pip/pip.conf"
+          echo 'Cython==0.29.36' > /tmp/v32-pip-constraint.txt
+          if command -v sudo >/dev/null 2>&1; then
+            sudo bash -c '
+              echo "[global]"
+              echo "constraint = /tmp/v32-pip-constraint.txt"
+              echo "upgrade-strategy = only-if-needed"
+            ' > /etc/pip.conf 2>/dev/null || true
+          fi
+          {
+            echo "::notice::iter 32 user-level pip.conf active for this step:"
+            echo "::notice::  HOME=${HOME}"
+            echo "::notice::  pip.conf:"
+            sed 's/^/::notice::    /' "${HOME}/.pip/pip.conf"
+            echo "::notice::  constraint file body:"
+            sed 's/^/::notice::    /' /tmp/v32-pip-constraint.txt
+            if [[ -f /etc/pip.conf ]]; then
+              echo "::notice::  /etc/pip.conf present:"
+              sed 's/^/::notice::    /' /etc/pip.conf
+            fi
           }
           bash scripts/prepare_cover.sh
           buildozer --verbose android debug \
