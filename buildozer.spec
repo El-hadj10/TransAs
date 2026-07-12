@@ -33,7 +33,20 @@ version.pattern = 0.1
 # route map PNG). The version pin matches ``requirements.txt`` and is the
 # line whose p4a recipe builds cleanly on NDK r26d. ``geopy`` is retained
 # for ``requirements.txt`` parity (size impact negligible).
-requirements = python3,kivy==2.3.0,kivymd==1.1.1,requests,Pillow>=10.0.0,<11.0.0,geopy
+#
+# CRITICAL PIN (iter-30): `cython==0.29.36` MUST appear BEFORE `kivy`. python-
+# for-android reads the `requirements` line as its recipe-manifest; explicitly
+# demanding cython==0.29.36 forces p4a's host-build phase to download the
+# Cython 0.29.x track instead of letting p4a pull the latest Cython (3.x
+# by recent default). Without this pin kivy 2.3.0's generated `_clock.c`
+# emits an SDL2 callback invocation with 5 args where the binding expects
+# 6, surfacing during compile as
+#   `error: too few arguments to function call, expected 6, have 5`
+# (the original iter-29 buildozer crash trace, GH Actions run 29195127402).
+# This is THE root cause that survived 29 iterations; the rest of the
+# pipeline (SDK layout, NDK env lock, symlink path aliases) was a long
+# prelude to identifying the actual recipe mistake.
+requirements = python3,cython==0.29.36,kivy==2.3.0,kivymd==1.1.1,requests,Pillow>=10.0.0,<11.0.0,geopy
 
 # Portrait orientation — one-handed use in the field (cf. manifest.md §2).
 orientation = portrait
