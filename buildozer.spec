@@ -62,15 +62,41 @@ icon.filename = %(source.dir)s/cover/icon.jpg
 android.api = 34
 android.minapi = 21
 
-# SDK location. We rely on Buildozer's documented env-var expansion: the
-# leading ``$`` token is replaced with the value of the ``ANDROIDSDK``
-# env var at invocation time (an unset env var expands to an empty
-# string, producing Buildozer's misleading "Android SDK not found"
-# — much clearer than a Python-template ``KeyError``). You MUST
-# ``export ANDROIDSDK=$HOME/Android/Sdk`` before invoking buildozer
-# (see ``cover/README.md`` § "Tell Buildozer where the SDK and JDK
-# live" for interactive vs non-interactive-shell recipes).
-android.sdk_path = $ANDROIDSDK
+# SDK location.
+#
+# CRITICAL FIX (iteration 22): hardcoded path rather than ``$ANDROIDSDK``
+# env-var expansion.
+#
+# Why: buildozer loads this spec and runs ``os.path.expandvars()`` on
+# string templates **once** at spec-load time (in the Python subprocess
+# before python-for-android ever reads the value). When ``ANDROIDSDK``
+# is missing from ``os.environ`` at that moment — which empirically
+# happens on github-hosted runners even when bash-level ``export
+# ANDROIDSDK=...`` runs in the same step — the literal ``$ANDROIDSDK``
+# substring survives. python-for-android then concatenates it into paths
+# like ``os.path.join('$ANDROIDSDK', 'tools', 'bin', 'sdkmanager')``,
+# which surfaces as the misleading "Wrong version in preinstalled
+# sdkmanager" warning followed by the
+#   ClassNotFoundException: com.android.sdklib.tool.sdkmanager.SdkManagerCli
+# that has blocked every run since iteration 11.
+#
+# Side-effect-free fix: hardcode the root that ``setup-android@v4``
+# installs to on ubuntu-22.04 (verified by reading the action's
+# ``action.yml`` and confirmed by the resolved ``ANDROID_HOME`` in past
+# runs — log lines like ``::notice::✓ ANDROIDSDK=/usr/local/lib/android/sdk``
+# match exactly). This bypasses both env-var substitution and the
+# p4a ``$PATH`` fallback that mis-resolves ``APP_HOME`` on cmdline-tools
+# 14.0.
+#
+# Local-dev override: replace this path with your own SDK install before
+# ``buildozer android debug`` (typical values:
+#   Linux   → $HOME/Android/Sdk
+#   macOS   → $HOME/Library/Android/sdk
+#   Windows → %USERPROFILE%\Android\Sdk
+# ) AND export ``ANDROIDSDK`` / ``ANDROID_HOME`` / ``ANDROID_SDK_ROOT``
+# / ``ANDROIDNDK`` in the same shell (see ``cover/README.md`` §
+# "Tell Buildozer where the SDK and JDK live").
+android.sdk_path = /usr/local/lib/android/sdk
 
 # CRITICAL FIX (iteration 20):
 # Disable p4a's internal sdkmanager invocation. The p4a wrapper script
