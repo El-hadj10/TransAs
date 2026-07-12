@@ -172,7 +172,19 @@ jobs:
 
       - name: Build APK (${{ matrix.arch }})
         env:
-          ANDROIDSDK: ${{ env.ANDROIDSDK }}
+          # CRITICAL FIX (iteration 21):
+          # We intentionally do NOT keep ANDROIDSDK in this env block. On
+          # GitHub-hosted runners the `$GITHUB_ENV` relay sometimes resolves
+          # `${{ env.ANDROIDSDK }}` to an empty string at this step, which
+          # makes buildozer / p4a see a literal `$ANDROIDSDK` placeholder and
+          # try `${cwd}/$ANDROIDSDK/tools/bin/sdkmanager` — surfacing the
+          # ClassNotFoundException for SdkManagerCli after a misleading
+          # "Wrong version in preinstalled sdkmanager" warning.
+          #
+          # Instead we keep ANDROID_HOME here (which @v4 reliably writes to
+          # $GITHUB_ENV) and re-export ANDROIDSDK explicitly in the bash
+          # run block below, where the export actually lands in the
+          # subprocess env that buildozer / p4a consult.
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
           ANDROIDAPI: ${{ env.ANDROIDAPI }}
@@ -182,7 +194,26 @@ jobs:
           P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.KEYSTORE_PASSWORD }}
           P4A_RELEASE_KEY_PASSWD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+          # CRITICAL FIX (iteration 21): force-export ANDROIDSDK here, in
+          # bash, BEFORE invoking buildozer. The GH Actions env: block above
+          # only sees ANDROID_HOME reliably (set by setup-android@v4 in
+          # $GITHUB_ENV). Buildozer / p4a's os.environ['ANDROIDSDK'] reads
+          # ONLY the bash process env, NOT the GH Actions step env directly,
+          # so we must mirror ANDROID_HOME into ANDROIDSDK in the same
+          # shell that invokes buildozer. Without this, p4a falls back to
+          # os.path.join(cwd, '$ANDROIDSDK', 'tools', 'bin', 'sdkmanager')
+          # and emits the misleading SdkManagerCli ClassNotFoundException.
+          export ANDROIDSDK="${ANDROID_HOME}"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          {
+            echo "::notice::Build APK environment:"
+            echo "::notice::  ANDROIDSDK      = ${ANDROIDSDK}"
+            echo "::notice::  ANDROID_HOME    = ${ANDROID_HOME}"
+            echo "::notice::  ANDROID_SDK_ROOT= ${ANDROID_SDK_ROOT}"
+            echo "::notice::  ANDROIDNDK      = ${ANDROIDNDK}"
+            echo "::notice::  matrix.arch     = ${{ matrix.arch }}"
+          }
           bash scripts/prepare_cover.sh
           buildozer --verbose android debug \
             arch=${{ matrix.arch }} \
