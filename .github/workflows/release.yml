@@ -327,12 +327,16 @@ jobs:
           P4A_SHA=$(git -C "${P4A_LOCAL}" rev-parse --short HEAD)
           echo "::notice::Cloned p4a (depth=1) @ ${P4A_SHA} → ${P4A_LOCAL}"
           # Sed-patch BOTH hardcoded selectors to the strict pinned form.
-          # p4a emits these in its own internal recipe bootstrap files
-          # (`pythonforandroid/recipes/{hostpython3,pyjnius-sdl2,...}`);
-          # blanket-rewriting collapses ALL possible resolution paths.
-          find "${P4A_LOCAL}/pythonforandroid" -type f -name '*.py' -exec \
+          # p4a stores these selectors across ALL text formats —
+          # `.py`, `.toml` (pyproject.toml), `setup.py`, `.cfg`, `requirements.txt`,
+          # shell snippets inside recipes. Iter-33's first attempt restricted
+          # to `-name '*.py'` and missed `recipes/android/src/pyproject.toml`
+          # (which holds the `Cython>=0.29,<3.1` line) → exit 8 → crash in <2 min.
+          # Iter-33 fix: drop the file-type restriction entirely. Sed EACH text
+          # file in pythonforandroid (no harm doing sed on non-matching files).
+          find "${P4A_LOCAL}/pythonforandroid" -type f -exec \
               sed -i 's/Cython<3\.2/Cython==0.29.36/g' {} +
-          find "${P4A_LOCAL}/pythonforandroid" -type f -name '*.py' -exec \
+          find "${P4A_LOCAL}/pythonforandroid" -type f -exec \
               sed -i 's/Cython>=0\.29,<3\.1/Cython==0.29.36/g' {} +
           # Defensive verification: if either selector survives, the build
           # would still install Cython 3.x. Fail loud with a distinct exit
