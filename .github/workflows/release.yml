@@ -37,6 +37,10 @@ jobs:
       ANDROIDAPI: 34
       ANDROIDMINAPI: 21
       ANDROID_NDK_VERSION: 25.2.9519653
+      # cmdline-tools (a.k.a. "tools") pin — DRY source for both
+      # setup-android@v4's input AND the iter-24 alias symlink below.
+      # Bump this here to upgrade the whole pipeline; bump-and-forget.
+      CMDLINE_TOOLS_VERSION: 13114758
       KEYSTORE_FILE: ${{ github.workspace }}/transas-release.jks
 
     steps:
@@ -86,7 +90,7 @@ jobs:
         id: setup_android
         uses: android-actions/setup-android@v4
         with:
-          cmdline-tools-version: 13114758
+          cmdline-tools-version: ${{ env.CMDLINE_TOOLS_VERSION }}
           packages: >-
             platform-tools
             platforms;android-${{ env.ANDROIDAPI }}
@@ -212,25 +216,45 @@ jobs:
             echo "::notice::  ANDROID_HOME    = ${ANDROID_HOME}"
             echo "::notice::  ANDROID_SDK_ROOT= ${ANDROID_SDK_ROOT}"
             echo "::notice::  ANDROIDNDK      = ${ANDROIDNDK}"
+            echo "::notice::  CTV             = ${CMDLINE_TOOLS_VERSION}"
             echo "::notice::  matrix.arch     = ${{ matrix.arch }}"
           }
-          # CRITICAL FIX (iteration 23):
-          # setup-android@v4 installs cmdline-tools under a versioned
-          # directory (${ANDROIDSDK}/cmdline-tools/13114758/...). But
-          # python-for-android's pre-flight check that runs BEFORE
-          # `android.skip_update` has any effect expects the modern
-          # "latest" layout (${ANDROIDSDK}/cmdline-tools/latest/bin/
-          # sdkmanager) and aborts loudly otherwise:
-          #   sdkmanager path "<sdk>/tools/bin/sdkmanager" does not exist
-          # Adding the alias symlink below satisfies p4a's expectation
-          # without touching the @v4-installed bits. The cmdline-tools
-          # wrapper script resolves `../lib/...` JARs RELATIVE TO ITS
-          # OWN DIRECTORY, so we symlink the WHOLE versioned directory,
-          # not just the sdkmanager binary — that preserves classpath
-          # resolution and prevents the ClassNotFoundException
-          # resurface.
-          ln -sfn 13114758 "${ANDROIDSDK}/cmdline-tools/latest"
-          echo "::notice::Linked ${ANDROIDSDK}/cmdline-tools/latest -> 13114758"
+          # CRITICAL FIX (iteration 24):
+          # buildozer's android target (buildozer/targets/android.py ~L276)
+          # constructs the sdkmanager path as:
+          #   os.path.join(self.android_sdk_dir, 'tools', 'bin', 'sdkmanager')
+          # unconditionally — there is NO modern /cmdline-tools/latest
+          # fallback in this buildozer release (verified against
+          # kivy/buildozer master + RemiFan/buildozer master via direct
+          # source fetch). @v4 however only installs cmdline-tools under
+          #   ${ANDROIDSDK}/cmdline-tools/${CMDLINE_TOOLS_VERSION}/
+          # never under ${ANDROIDSDK}/tools/. Without a bridge symlink,
+          # p4a's pre-flight check aborts with:
+          #   "sdkmanager path <sdk>/tools/bin/sdkmanager does not exist"
+          # BEFORE `android.skip_update` has any effect.
+          #
+          # Two alias symlinks bridge modern AND legacy consumers:
+          #   1) ${ANDROIDSDK}/tools -> cmdline-tools/${CTV}  (legacy p4a)
+          #   2) ${ANDROIDSDK}/cmdline-tools/latest -> ${CTV} (modern Gradle)
+          # We alias the WHOLE versioned parent directory (not just the
+          # sdkmanager binary) so the wrapper script's RELATIVE ../lib
+          # classpath lookup continues to resolve to the JAR directory.
+          # CTV is sourced from the job-level env (same value as the
+          # setup-android@v4 input) — DRY, single source of truth.
+          CTV="${CMDLINE_TOOLS_VERSION}"
+          [[ -d "${ANDROIDSDK}/cmdline-tools/${CTV}" ]] || {
+            echo "::error::cmdline-tools/${CTV} not installed by setup-android@v4"
+            ls -la "${ANDROIDSDK}/cmdline-tools/" || true
+            exit 5
+          }
+          # If a real `tools/` directory already exists (rare; @v4 doesn't
+          # create one), force-remove it so `ln -sfn` can place the alias.
+          [[ -L "${ANDROIDSDK}/tools" || ! -e "${ANDROIDSDK}/tools" ]] \
+              || rm -rf "${ANDROIDSDK}/tools"
+          ln -sfn "${ANDROIDSDK}/cmdline-tools/${CTV}" "${ANDROIDSDK}/tools"
+          ln -sfn "${CTV}" "${ANDROIDSDK}/cmdline-tools/latest"
+          echo "::notice::Linked ${ANDROIDSDK}/tools -> cmdline-tools/${CTV}"
+          echo "::notice::Linked ${ANDROIDSDK}/cmdline-tools/latest -> ${CTV}"
           bash scripts/prepare_cover.sh
           buildozer --verbose android debug \
             arch=${{ matrix.arch }} \
