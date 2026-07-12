@@ -243,6 +243,14 @@ jobs:
           export P4A_NDK_DIR="${NDK_DIR}"
           export ANDROID_NDK_HOME="${NDK_DIR}"
           export ANDROID_NDK_ROOT="${NDK_DIR}"
+          # Sixth legacy alias (iter-29 reviewer's NIT): pre-NDK-r12
+          # autoconf, older cmake modules, and a handful of kvm wrapper
+          # scripts read NDK_ROOT as the canonical name rather than
+          # ANDROID_NDK_ROOT. Costs nothing in buildozer/p4a but
+          # future-proofs against any p4a recipe invoking an
+          # autoconf-using dependency. Belt to iter-28's 5-way
+          # suspenders.
+          export NDK_ROOT="${NDK_DIR}"
           {
             echo "::notice::Build APK environment:"
             echo "::notice::  ANDROIDSDK      = ${ANDROIDSDK}"
@@ -254,6 +262,7 @@ jobs:
             echo "::notice::  P4A_NDK_DIR     = ${P4A_NDK_DIR}"
             echo "::notice::  ANDROID_NDK_HOME= ${ANDROID_NDK_HOME}"
             echo "::notice::  ANDROID_NDK_ROOT= ${ANDROID_NDK_ROOT}"
+            echo "::notice::  NDK_ROOT        = ${NDK_ROOT}"
             echo "::notice::  CTV             = ${CMDLINE_TOOLS_VERSION}"
             echo "::notice::  matrix.arch     = ${{ matrix.arch }}"
           }
