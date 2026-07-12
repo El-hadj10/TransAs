@@ -210,27 +210,50 @@ jobs:
           # and emits the misleading SdkManagerCli ClassNotFoundException.
           export ANDROIDSDK="${ANDROID_HOME}"
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
-          # CRITICAL FIX (iteration 27): force-export the NDK env vars so
-          # buildozer / python-for-android honor OUR pre-installed r25c instead
-          # of auto-bootstrapping r27/r28c into .buildozer/android/platform/.
-          # Iter-26 (commit b753c10) confirmed that `android.ndk_path = ...`
-          # in buildozer.spec was INSUFFICIENT — buildozer ended up
-          # cross-compiling with NDK 27.3.13750724 despite our spec pin.
-          # Env-var override at the bash level carries HIGHER precedence
-          # than spec properties in both buildozer and p4a. Belt-and-
-          # suspenders: ANDROIDNDK (buildozer convention), P4A_NDK_DIR
-          # (current p4a convention), AND ANDROID_NDK (legacy p4a env).
-          export ANDROIDNDK="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
-          export P4A_NDK_DIR="${ANDROIDNDK}"
-          export ANDROID_NDK="${ANDROIDNDK}"
+          # CRITICAL FIX (iteration 28): five-way NDK env lock.
+          # Iter-27's buildozer env dump (captured by our `if: always()`
+          # artifact upload — see run 29192894447 logs) revealed that
+          # P4A_NDK_DIR / ANDROID_NDK / ANDROIDNDK were correctly r25c,
+          # but ANDROID_NDK_HOME and ANDROID_NDK_ROOT remained pointed
+          # at `27.3.13750724` (r27) — independently set by
+          # setup-android@v4 to whatever its `latest` NDK install is,
+          # NOT to the version we asked for. Compilers / CMake /
+          # Gradle that read ANDROID_NDK_HOME were then using r27
+          # while p4a used r25c — a hard link-time mismatch.
+          #
+          # Force ALL known NDK env vars to a single NDK_DIR below
+          # buildozer's invocation, in the same bash process. Bash-
+          # level `export` carries higher precedence than any value
+          # propagated earlier via $GITHUB_ENV by @v4. DRYed through
+          # an intermediate `NDK_DIR` so future bumps of
+          # ANDROID_NDK_VERSION ripple through to all 5 names
+          # simultaneously.
+          NDK_DIR="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          # Defensive guard: if the @v4-installed NDK dir is missing
+          # for any reason, fail LOUD with a distinct exit code (7)
+          # so post-mortem is unambiguous. Do NOT silently fall through.
+          [[ -d "${NDK_DIR}" ]] || {
+            echo "::error::NDK_DIR=${NDK_DIR} not present after setup-android@v4"
+            echo "::notice::Available NDKs:"
+            ls -la "${ANDROID_HOME}/ndk/" 2>/dev/null || true
+            exit 7
+          }
+          export ANDROIDNDK="${NDK_DIR}"
+          export ANDROID_NDK="${NDK_DIR}"
+          export P4A_NDK_DIR="${NDK_DIR}"
+          export ANDROID_NDK_HOME="${NDK_DIR}"
+          export ANDROID_NDK_ROOT="${NDK_DIR}"
           {
             echo "::notice::Build APK environment:"
             echo "::notice::  ANDROIDSDK      = ${ANDROIDSDK}"
             echo "::notice::  ANDROID_HOME    = ${ANDROID_HOME}"
             echo "::notice::  ANDROID_SDK_ROOT= ${ANDROID_SDK_ROOT}"
+            echo "::notice::  NDK_DIR         = ${NDK_DIR}"
             echo "::notice::  ANDROIDNDK      = ${ANDROIDNDK}"
-            echo "::notice::  P4A_NDK_DIR     = ${P4A_NDK_DIR}"
             echo "::notice::  ANDROID_NDK     = ${ANDROID_NDK}"
+            echo "::notice::  P4A_NDK_DIR     = ${P4A_NDK_DIR}"
+            echo "::notice::  ANDROID_NDK_HOME= ${ANDROID_NDK_HOME}"
+            echo "::notice::  ANDROID_NDK_ROOT= ${ANDROID_NDK_ROOT}"
             echo "::notice::  CTV             = ${CMDLINE_TOOLS_VERSION}"
             echo "::notice::  matrix.arch     = ${{ matrix.arch }}"
           }
