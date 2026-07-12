@@ -241,7 +241,14 @@ jobs:
           # classpath lookup continues to resolve to the JAR directory.
           # CTV is sourced from the job-level env (same value as the
           # setup-android@v4 input) — DRY, single source of truth.
-          CTV="${CMDLINE_TOOLS_VERSION}"
+          CTV="${CMDLINE_TOOLS_VERSION:-}"
+          # iter-25 quality fix (per code-reviewer verdict): guard ORDER MATTERS
+          # under `set -u`. Use `:s/-` empty-default to avoid a crash on UNSET
+          # env, THEN test for non-empty. Two distinct error paths:
+          [[ -n "${CTV}" ]] || {
+            echo "::error::CMDLINE_TOOLS_VERSION env empty or unset"
+            exit 6
+          }
           [[ -d "${ANDROIDSDK}/cmdline-tools/${CTV}" ]] || {
             echo "::error::cmdline-tools/${CTV} not installed by setup-android@v4"
             ls -la "${ANDROIDSDK}/cmdline-tools/" || true
