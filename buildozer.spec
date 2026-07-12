@@ -72,6 +72,17 @@ android.minapi = 21
 # live" for interactive vs non-interactive-shell recipes).
 android.sdk_path = $ANDROIDSDK
 
+# CRITICAL FIX (iteration 20):
+# Disable p4a's internal sdkmanager invocation. The p4a wrapper script
+# has a hardcoded classpath that fails to resolve SdkManagerCli when
+# cmdline-tools version >= 14.0 is in use. Since we pre-install all
+# required SDK components via setup-android@v4 (which correctly handles
+# the classpath), p4a's update check is redundant and only causes:
+#   ClassNotFoundException: com.android.sdklib.tool.sdkmanager.SdkManagerCli
+# Setting android.skip_update = 1 tells p4a to trust the pre-installed SDK
+# and skip its own sdkmanager invocation entirely.
+android.skip_update = 1
+
 # INTERNET is required for Nominatim (address -> GPS) and OSRM (distance matrix).
 # ACCESS_NETWORK_STATE lets Kivy / requests detect offline mode gracefully.
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
