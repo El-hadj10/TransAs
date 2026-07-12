@@ -46,7 +46,12 @@ jobs:
     env:
       ANDROIDAPI: 34
       ANDROIDMINAPI: 21
-      ANDROIDNDK: 26.3.11579264
+      # Source of truth for the Android NDK version. The community
+      # `android-actions/setup-android@v3` action downloads it via the
+      # `ndk;${ANDROID_NDK_VERSION}` package spec; buildozer needs an
+      # absolute directory path, which we set in the Build APK step env
+      # below (since $ANDROIDSDK isn't known until that earlier step).
+      ANDROID_NDK_VERSION: 26.3.11579264
       # No ANDROIDSDK here — set instead by the Setup Android SDK step.
       KEYSTORE_FILE: ${{ github.workspace }}/transas-release.jks
 
@@ -124,7 +129,7 @@ jobs:
             platform-tools
             platforms;android-${{ env.ANDROIDAPI }}
             build-tools;34.0.0
-            ndk;${{ env.ANDROIDNDK }}
+            ndk;${{ env.ANDROID_NDK_VERSION }}
 
       - name: Expose ANDROIDSDK env var for buildozer
         # The community action sets $ANDROID_HOME, but buildozer's
@@ -174,7 +179,14 @@ jobs:
         env:
           ANDROIDSDK: ${{ env.ANDROIDSDK }}
           ANDROIDAPI: ${{ env.ANDROIDAPI }}
-          ANDROIDNDK: ${{ env.ANDROIDNDK }}
+          # Override job-level ANDROID_NDK_VERSION (a bare version string)
+          # with an absolute path. buildozer / python-for-android treat
+          # ANDROIDNDK strictly as a directory and abort almost instantly
+          # if given just the version (`Android NDK not found at ...`).
+          # The setup-android@v3 action installs the NDK at
+          # `${ANDROIDSDK}/ndk/${ANDROID_NDK_VERSION}/`; ANDROIDSDK was
+          # set in the previous step via $GITHUB_ENV.
+          ANDROIDNDK: ${{ env.ANDROIDSDK }}/ndk/${{ env.ANDROID_NDK_VERSION }}
           P4A_RELEASE_KEYSTORE: ${{ env.KEYSTORE_FILE }}
           P4A_RELEASE_KEYALIAS: ${{ secrets.KEY_ALIAS }}
           P4A_RELEASE_KEYSTORE_PASSWD: ${{ secrets.KEYSTORE_PASSWORD }}
