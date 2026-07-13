@@ -34,19 +34,9 @@ version.pattern = 0.1
 # line whose p4a recipe builds cleanly on NDK r26d. ``geopy`` is retained
 # for ``requirements.txt`` parity (size impact negligible).
 #
-# CRITICAL PIN (iter-30): `cython==0.29.36` MUST appear BEFORE `kivy`. python-
-# for-android reads the `requirements` line as its recipe-manifest; explicitly
-# demanding cython==0.29.36 forces p4a's host-build phase to download the
-# Cython 0.29.x track instead of letting p4a pull the latest Cython (3.x
-# by recent default). Without this pin kivy 2.3.0's generated `_clock.c`
-# emits an SDL2 callback invocation with 5 args where the binding expects
-# 6, surfacing during compile as
-#   `error: too few arguments to function call, expected 6, have 5`
-# (the original iter-29 buildozer crash trace, GH Actions run 29195127402).
-# This is THE root cause that survived 29 iterations; the rest of the
-# pipeline (SDK layout, NDK env lock, symlink path aliases) was a long
-# prelude to identifying the actual recipe mistake.
-requirements = python3,cython==0.29.36,kivy==2.3.0,kivymd==1.1.1,requests,Pillow>=10.0.0,<11.0.0,geopy
+# CRITICAL PIN: Kivy 2.3.0 + KivyMD 1.1.1 are stable here with Python 3.11
+# and Cython 0.29.36 when p4a recipes are aligned to the same python version.
+requirements = python3==3.11.11,cython==0.29.36,kivy==2.3.0,kivymd==1.1.1,requests,Pillow>=10.0.0,<11.0.0,geopy
 
 # Portrait orientation — one-handed use in the field (cf. manifest.md §2).
 orientation = portrait
@@ -75,65 +65,21 @@ icon.filename = %(source.dir)s/cover/icon.jpg
 android.api = 34
 android.minapi = 21
 
+# Build arm64 only for faster, more reliable local APK generation.
+android.archs = arm64-v8a
+
 # SDK location.
 #
-# CRITICAL FIX (iteration 22): hardcoded path rather than ``$ANDROIDSDK``
-# env-var expansion.
-#
-# Why: buildozer loads this spec and runs ``os.path.expandvars()`` on
-# string templates **once** at spec-load time (in the Python subprocess
-# before python-for-android ever reads the value). When ``ANDROIDSDK``
-# is missing from ``os.environ`` at that moment — which empirically
-# happens on github-hosted runners even when bash-level ``export
-# ANDROIDSDK=...`` runs in the same step — the literal ``$ANDROIDSDK``
-# substring survives. python-for-android then concatenates it into paths
-# like ``os.path.join('$ANDROIDSDK', 'tools', 'bin', 'sdkmanager')``,
-# which surfaces as the misleading "Wrong version in preinstalled
-# sdkmanager" warning followed by the
-#   ClassNotFoundException: com.android.sdklib.tool.sdkmanager.SdkManagerCli
-# that has blocked every run since iteration 11.
-#
-# Side-effect-free fix: hardcode the root that ``setup-android@v4``
-# installs to on ubuntu-22.04 (verified by reading the action's
-# ``action.yml`` and confirmed by the resolved ``ANDROID_HOME`` in past
-# runs — log lines like ``::notice::✓ ANDROIDSDK=/usr/local/lib/android/sdk``
-# match exactly). This bypasses both env-var substitution and the
-# p4a ``$PATH`` fallback that mis-resolves ``APP_HOME`` on cmdline-tools
-# 14.0.
-#
-# Local-dev override: replace this path with your own SDK install before
-# ``buildozer android debug`` (typical values:
-#   Linux   → $HOME/Android/Sdk
-#   macOS   → $HOME/Library/Android/sdk
-#   Windows → %USERPROFILE%\Android\Sdk
-# ) AND export ``ANDROIDSDK`` / ``ANDROID_HOME`` / ``ANDROID_SDK_ROOT``
-# / ``ANDROIDNDK`` in the same shell (see ``cover/README.md`` §
-# "Tell Buildozer where the SDK and JDK live").
-android.sdk_path = /usr/local/lib/android/sdk
+# Use a project-local SDK path so Buildozer can create and populate the
+# Android toolchain in a writable location on this machine. The previous
+# hardcoded /usr/local/lib/android path is not writable in this environment
+# and causes the build to fail before the real Android packaging work starts.
+android.sdk_path = %(source.dir)s/.android-sdk
 
-# CRITICAL FIX (iteration 26): pin buildozer's NDK path so python-for-android
-# uses the NDK we pre-installed via setup-android@v4 instead of bootstrapping
-# its own. Iter-25 logs (GH Actions run 29191818397) revealed that without
-# this pin, buildozer silently downloaded `android-ndk-r28c` into
-# .buildozer/android/platform/android-ndk-r28c/ - discordant with the
-# env's ANDROID_NDK_VERSION pin (25.2.9519653 / r25c) declared in
-# .github/workflows/release.yml. With mismatched toolchains, p4a's
-# cross-compile of hostpython3 / target-python / Kivy C-extensions crashed
-# clang after ~13 minutes of compile. Pinning here forces buildozer to
-# honor our pre-installed r25c (clang 14, binutils GNU) which is the
-# version p4a's recipes are calibrated against.
-# Local-dev override: replace with the matching NDK dir of your local SDK.
-# CRITICAL FIX (iter-35): back to NDK r25c (25.2.9519653). p4a strictly
-# requires NDK >= 25 (iter-34's r23b downgrade was rejected with the error
-# `The minimum supported NDK version is 25`). To bypass clang-14's
-# rejection of autoconf's `--print-multi-os-directory` GCC-only probe
-# (used by libffi / openssl configure), the iter-35 release.yml step
-# installs host gcc/g++/build-essential AND exports `CC_FOR_BUILD=gcc`
-# BEFORE the buildozer invocation; p4a's recipes inherit CC_FOR_BUILD
-# which GNU autoconf uses for host-side tooling checks (separately from
-# the cross-compile CC=clang). This keeps clang-14 as the cross-compiler
-# while steering ONLY the broken probe through gcc.
-android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
+# Use a project-local NDK path so Buildozer can populate the toolchain in a
+# writable location. This avoids the permission issue on the old global path
+# and keeps the SDK/NDK under the repository tree for local builds.
+android.ndk_path = %(source.dir)s/.android-sdk/ndk/25.2.9519653
 
 # CRITICAL FIX (iteration 33): p4a recipe override — THE surgical fix.
 #
@@ -149,11 +95,8 @@ android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
 # collides with Kivy 2.3.0's generated `_clock.c` at clang compile, surfacing
 # as `error: too few arguments to function call, expected 6, have 5`.
 #
-# THE surgical fix: the iter-33 release.yml step clones p4a, sed-patches
-# BOTH hardcoded selectors to a strict `Cython==0.29.36` (the exact version
-# Kivy 2.3.0's _clock.pyx was generated against), then points buildozer at
-# the patched clone via this `android.p4a_dir`. Patched p4a's bootstrap
-# resolves OUR selector and CANNOT upgrade past it.
+# THE surgical fix: the release workflow clones p4a, then patches recipe
+# selectors to keep python3/hostpython3 and Cython aligned.
 #
 # The clone lives under source.dir so the same relative path works on local
 # dev (`bash scripts/prepare_cover.sh && buildozer android debug`) after
@@ -174,6 +117,12 @@ android.skip_update = 1
 # INTERNET is required for Nominatim (address -> GPS) and OSRM (distance matrix).
 # ACCESS_NETWORK_STATE lets Kivy / requests detect offline mode gracefully.
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
+
+# Explicit C++ runtime for the SDL2 bootstrap layer. The p4a bootstrap builds
+# a small native C++ component (for example hid.cpp), and without an STL the
+# linker leaves the operator new/delete symbols unresolved during the create
+# step. This is the common cause of the linker failures seen in CI logs.
+android.stl = c++_shared
 
 # Solid white background behind the launcher icon (matches the cover).
 android.presplash_color = #FFFFFFFF

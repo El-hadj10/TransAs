@@ -159,6 +159,7 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           set +e
           if [[ -z "${KEYSTORE_BASE64:-}" ]]; then
@@ -171,8 +172,7 @@ jobs:
             echo "HAS_KEYSTORE=false" >> "$GITHUB_ENV"; exit 0
           fi
           chmod 600 "${KEYSTORE_FILE}"
-          if ! keytool -list -v -keystore "${KEYSTORE_FILE}" \
-              -storepass "${{ secrets.KEYSTORE_PASSWORD }}" >/dev/null 2>&1; then
+          if ! keytool -list -v -keystore "${KEYSTORE_FILE}" -storepass "${KEYSTORE_PASSWORD:-}" >/dev/null 2>&1; then
             echo "::warning::keystore unlock failed — continuing"
             echo "HAS_KEYSTORE=false" >> "$GITHUB_ENV"
             exit 0
@@ -181,7 +181,7 @@ jobs:
           echo "::notice::Release keystore OK"
 
       - name: Activate release signing in buildozer.spec
-        if: env.HAS_KEYSTORE == 'true'
+        if: ${{ env.HAS_KEYSTORE == 'true' }}
         run: |
           set -euo pipefail
           sed -i \
@@ -262,6 +262,7 @@ jobs:
           export P4A_NDK_DIR="${NDK_DIR}"
           export ANDROID_NDK_HOME="${NDK_DIR}"
           export ANDROID_NDK_ROOT="${NDK_DIR}"
+          export ANDROID_STL="c++_shared"
           # Sixth legacy alias (iter-29 reviewer's NIT): pre-NDK-r12
           # autoconf, older cmake modules, and a handful of kvm wrapper
           # scripts read NDK_ROOT as the canonical name rather than
@@ -278,6 +279,7 @@ jobs:
             echo "::notice::  NDK_DIR         = ${NDK_DIR}"
             echo "::notice::  ANDROIDNDK      = ${ANDROIDNDK}"
             echo "::notice::  ANDROID_NDK     = ${ANDROID_NDK}"
+            echo "::notice::  ANDROID_STL     = ${ANDROID_STL}"
             echo "::notice::  P4A_NDK_DIR     = ${P4A_NDK_DIR}"
             echo "::notice::  ANDROID_NDK_HOME= ${ANDROID_NDK_HOME}"
             echo "::notice::  ANDROID_NDK_ROOT= ${ANDROID_NDK_ROOT}"
@@ -328,16 +330,8 @@ jobs:
           ln -sfn "${CTV}" "${ANDROIDSDK}/cmdline-tools/latest"
           echo "::notice::Linked ${ANDROIDSDK}/tools -> cmdline-tools/${CTV}"
           echo "::notice::Linked ${ANDROIDSDK}/cmdline-tools/latest -> ${CTV}"
-          # CRITICAL FIX (iteration 33): neutralize p4a's Cython 3.x hardcodes
-          # by sed-patching a freshly-cloned local python-for-android and
-          # pointing buildozer at our patched clone via `android.p4a_dir`
-          # (set in buildozer.spec). This is the ONLY mechanism that works:
-          # the iter-30 spec pin, iter-31 PIP_CONSTRAINT env var, and
-          # iter-32 pip.conf files were ALL proven ineffective because they
-          # operate OUTSIDE p4a's internal pip subprocess invocation site.
-          # The patched clone's bootstrap `pip3 install ... Cython==0.29.36`
-          # resolves exactly to the version Kivy 2.3.0's `_clock.pyx` was
-          # generated against, sidestepping the varargs/SDL2 mismatch.
+          # CRITICAL FIX: patch local p4a so python3 and hostpython3 are both
+          # pinned to 3.11.11 and Cython selectors are collapsed to 0.29.36.
           set -euo pipefail
           P4A_LOCAL="$(pwd)/.local/python-for-android"
           rm -rf "${P4A_LOCAL}"
@@ -353,10 +347,14 @@ jobs:
           # (which holds the `Cython>=0.29,<3.1` line) → exit 8 → crash in <2 min.
           # Iter-33 fix: drop the file-type restriction entirely. Sed EACH text
           # file in pythonforandroid (no harm doing sed on non-matching files).
-          find "${P4A_LOCAL}/pythonforandroid" -type f -exec \
-              sed -i 's/Cython<3\.2/Cython==0.29.36/g' {} +
-          find "${P4A_LOCAL}/pythonforandroid" -type f -exec \
-              sed -i 's/Cython>=0\.29,<3\.1/Cython==0.29.36/g' {} +
+              sed -i "s/version = '3.14.2'/version = '3.11.11'/g" \
+                "${P4A_LOCAL}/pythonforandroid/recipes/python3/__init__.py"
+              sed -i 's/version = "3.14.2"/version = "3.11.11"/g' \
+                "${P4A_LOCAL}/pythonforandroid/recipes/hostpython3/__init__.py"
+            find "${P4A_LOCAL}/pythonforandroid" -type f -exec \
+                sed -i 's/Cython<3\.2/Cython==0.29.36/g' {} +
+            find "${P4A_LOCAL}/pythonforandroid" -type f -exec \
+                sed -i 's/Cython>=0\.29,<3\.1/Cython==0.29.36/g' {} +
           # Defensive verification: if either selector survives, the build
           # would still install Cython 3.x. Fail loud with a distinct exit
           # code so the post-mortem is unambiguous.
@@ -368,8 +366,8 @@ jobs:
               exit 8
           fi
           # Echo proof-of-life for the patch so it's grep-able in logs.
-          echo "::notice::p4a patched OK: ALL Cython selectors collapsed to ==0.29.36"
-          grep -rn 'Cython==0\.29\.36' "${P4A_LOCAL}/pythonforandroid" \
+              echo "::notice::p4a patched OK: python3/hostpython3=3.11.11 and Cython==0.29.36"
+              grep -rnE "version = '3\.11\.11'|version = \"3\.11\.11\"|Cython==0\.29\.36" "${P4A_LOCAL}/pythonforandroid" \
               | head -5 | sed 's/^/::notice::    /'
           # CRITICAL FIX (iter-36): NDK clang shim wrapper for autoconf probes.
           # libffi / openssl / sqlite / libxml2 configure scripts probe
@@ -422,9 +420,15 @@ jobs:
           export CC_FOR_BUILD="${CC_FOR_BUILD:-gcc}"
           export CONFIG_SHELL=/bin/bash
           echo "::notice::iter 35 CC_FOR_BUILD=${CC_FOR_BUILD} CONFIG_SHELL=${CONFIG_SHELL}"
-          buildozer --verbose android debug \
-            arch=${{ matrix.arch }} \
-            2>&1 | tee buildozer-${{ matrix.arch }}.log
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            buildozer --verbose android debug \
+              arch=${{ matrix.arch }} \
+              2>&1 | tee buildozer-${{ matrix.arch }}.log
+          else
+            buildozer --verbose android debug \
+              arch=${{ matrix.arch }} \
+              2>&1 | tee buildozer-${{ matrix.arch }}.log
+          fi
           rc=${PIPESTATUS[0]}
           if [[ "$rc" -ne 0 ]]; then
             echo "::error::buildozer exited with status $rc — APK NOT produced"
@@ -447,7 +451,7 @@ jobs:
       - name: Verify APK signature and badging
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
-          PATH: ${{ env.ANDROIDSDK }}/build-tools/34.0.0:${{ env.PATH }}
+          PATH: ${{ env.ANDROID_SDK_ROOT }}/build-tools/34.0.0:${{ env.PATH }}
         run: |
           APK="${{ steps.find_apk.outputs.apk_path }}"
           apksigner verify -v "${APK}"
