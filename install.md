@@ -286,7 +286,8 @@ préalable. C'est pour ça qu'on ne livre jamais un release avant que le debug s
 [ ] adb shell pm list packages | grep transas → noter le nom EXACT (fr.transas.app OU fr.transas.app.transas)
 [ ] adb install bin/transas-0.1-arm64-v8a-debug.apk
 [ ] adb shell am start -n <nom.noté.ci.dessus>/org.kivy.android.PythonActivity
-[ ] UI : vérifier que ImportScreen + MapScreen + MainScreen s'affichent
+[ ] UI : vérifier que SafeTransAsScreen s'affiche (MENU / TransAs / OPTIONS + carte OSM)
+[ ] Recette fonctionnelle complète : suivre `docs/INSTALL_TEST_SAFE_SCREEN.md`
 [ ] Si crash : `adb logcat '*:S' AndroidRuntime:E python:D Python:D Kivy:D crasher:E p4a:D -v threadtime > /tmp/launch.log` (zsh : quoter le `*`) → m'envoyer le contenu pour diagnostic
 [ ] Quand fini : adb uninstall <le.même.nom.que.lancé> (wipe complet)
 [ ] Plus tard, quand signed-release dispo : adb install transas-*-release.apk

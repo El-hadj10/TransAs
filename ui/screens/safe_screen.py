@@ -609,6 +609,12 @@ class SafeTransAsScreen(BoxLayout):
         page.add_widget(content)
         self.add_widget(page)
         self.refresh()
+        # ``_status`` starts with the onboarding line, but the database may
+        # already hold stops (app restart, restored/imported DB). Showing
+        # "Ajoute des arrêts" next to three listed stops is misleading, so
+        # replace it once the first state is known.
+        if self._db.list_pending():
+            self._status.text = "Arrêts chargés — appuie sur OPTIMISER L'ORDRE."
 
     @staticmethod
     def _label(text: str, font_size: str, color, **kwargs) -> Label:
@@ -840,8 +846,15 @@ class SafeTransAsScreen(BoxLayout):
             self._status.text = "Écoute en cours : dicte l'adresse complète."
 
     def _on_voice_address(self, address: str) -> None:
+        """Turn the dictated address into a real stop.
+
+        Filling the field and asking for a second tap made the dictation look
+        ignored (El-hadj, 16/11/2026). The recognizer result arrives on the
+        Android UI thread, so the widget/DB work goes through the clock.
+        """
+        _logger.info("voice: address received %r", address)
         self._address.text = address
-        self._status.text = "Adresse dictée : vérifie-la puis appuie sur + STOP."
+        Clock.schedule_once(lambda _dt: self._add_parcel(), 0)
 
     def _route_text(self) -> str:
         parcels = self._ordered_pending()
@@ -923,8 +936,10 @@ class SafeTransAsScreen(BoxLayout):
         try:
             parcel_id = self._db.add_parcel(address)
         except (TypeError, ValueError) as exc:
+            _logger.warning("add_parcel refused %r: %s", address, exc)
             self._status.text = f"Adresse refusée : {exc}"
             return
+        _logger.info("add_parcel ok id=%s address=%r", parcel_id, address)
         self._address.text = ""
         self._status.text = f"Arrêt #{parcel_id} ajouté — appuie sur OPTIMISER."
         self.refresh()
@@ -962,23 +977,70 @@ class SafeTransAsScreen(BoxLayout):
         popup.open()
 
     def _optimize(self) -> None:
-        parcels = [ParcelInput(id=p.id, address=p.address, lat=p.lat, lon=p.lon) for p in self._db.list_pending()]
+        parcels = self._pending_inputs()
         if not parcels:
             self._status.text = "Ajoute au moins un arrêt."
             return
+        start_text = self._start_address.text.strip()
+        end_text = self._end_address.text.strip()
+        if bool(start_text) != bool(end_text):
+            self._status.text = "Renseigne à la fois le départ et l'arrivée."
+            return
+        # With no typed departure the tour starts where the driver actually
+        # is: one fresh fix (no continuous tracking), then a normal
+        # optimisation if no fix can be obtained.
+        if not start_text:
+            self._optimize_button.disabled = True
+            if has_permission():
+                self._optimize_from_fix()
+                return
+            if request_permission(self._on_optimize_permission):
+                self._status.text = "Autorise la localisation pour partir d'ici."
+                return
+            self._optimize_button.disabled = False
+        self._run_optimize(parcels, start_text, end_text)
+
+    def _on_optimize_permission(self, granted: bool) -> None:
+        if granted:
+            self._optimize_from_fix()
+            return
+        self._status.text = "Localisation refusée — optimisation sans départ…"
+        self._run_optimize(
+            self._pending_inputs(), "", self._end_address.text.strip(),
+        )
+
+    def _optimize_from_fix(self) -> None:
+        self._optimize_button.disabled = True
+        self._status.text = "Recherche de ta position…"
+        request_position(self._optimize_after_fix)
+
+    def _optimize_after_fix(self, position, error) -> None:
+        parcels = self._pending_inputs()
+        if not parcels:
+            self._optimize_button.disabled = False
+            self._status.text = "Ajoute au moins un arrêt."
+            return
+        start = None
+        if position is not None:
+            lat, lon = position
+            start = ParcelInput(id=-1, address="Ma position", lat=lat, lon=lon)
+        else:
+            _logger.info("optimize: no position fix (%s)", error)
+        self._run_optimize(
+            parcels, self._start_address.text.strip(),
+            self._end_address.text.strip(), start=start,
+        )
+
+    def _run_optimize(self, parcels, start_text: str, end_text: str, start=None) -> None:
         self._optimize_button.disabled = True
         self._status.text = "Calcul de la meilleure tournée…"
+        if start is None and start_text:
+            start = ParcelInput(id=-1, address=start_text)
+        end = ParcelInput(id=-2, address=end_text) if end_text else None
         try:
-            start_text = self._start_address.text.strip()
-            end_text = self._end_address.text.strip()
-            if bool(start_text) != bool(end_text):
-                self._optimize_button.disabled = False
-                self._status.text = "Renseigne à la fois le départ et l'arrivée."
-                return
-            start = ParcelInput(id=-1, address=start_text) if start_text else None
-            end = ParcelInput(id=-2, address=end_text) if end_text else None
             self._controller.start_geocode_then_optimize(parcels, start_point=start, end_point=end)
         except RuntimeError:
+            self._optimize_button.disabled = False
             self._status.text = "Optimisation déjà en cours."
         except Exception as exc:
             self._optimize_button.disabled = False
@@ -1044,7 +1106,12 @@ class SafeTransAsScreen(BoxLayout):
 
     def _on_finished(self, result: OptimizeResult) -> None:
         self._optimize_button.disabled = False
-        self._status.text = f"Tournée optimisée · {result.total_distance_m / 1000:.1f} km · {result.matrix_source}"
+        # A start point without an end point only comes from the GPS fix, so
+        # the status can say where the tour starts.
+        prefix = "Tournée optimisée"
+        if result.start_point is not None and result.end_point is None:
+            prefix = "Tournée optimisée depuis ta position"
+        self._status.text = f"{prefix} · {result.total_distance_m / 1000:.1f} km · {result.matrix_source}"
         if result.start_point and result.end_point:
             self._start_address.text = result.start_point.address
             self._end_address.text = result.end_point.address
