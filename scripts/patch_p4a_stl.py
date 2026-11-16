@@ -21,23 +21,28 @@ from pathlib import Path
 
 APP_STL_LINE = "APP_STL := c++_shared"
 APP_LDFLAGS_LINE = "APP_LDFLAGS += -lc++_shared"
-THORVG_MARKER = "_LibThorVG_get_recipe_env_libcxx"
+THORVG_MARKER = "_LibThorVG_get_recipe_env_libcxx_lm"
 
 THORVG_OVERRIDE = '''
 
 # TransAs (2026-11-16): MesonRecipe writes the cross-file link arguments from
-# env LDFLAGS; NDK r27+ ships no libstdc++, so link libc++_shared explicitly.
+# env LDFLAGS only. NDK r27+ ships no libstdc++, and libthorvg's own meson
+# files do not pull libm, so both must be linked explicitly: run 43953118690
+# failed on std::__ndk1::* / __cxa_*, then run 43956775611 on sincosf/tanf.
 _LibThorVG_get_recipe_env = LibThorVGRecipe.get_recipe_env
 
 
-def _LibThorVG_get_recipe_env_libcxx(self, arch, **kwargs):
+def _LibThorVG_get_recipe_env_libcxx_lm(self, arch, **kwargs):
     env = _LibThorVG_get_recipe_env(self, arch, **kwargs)
-    if "-lc++_shared" not in env.get("LDFLAGS", ""):
-        env["LDFLAGS"] = env.get("LDFLAGS", "") + " -lc++_shared"
+    ldflags = env.get("LDFLAGS", "")
+    for flag in ("-lc++_shared", "-lm"):
+        if flag not in ldflags:
+            ldflags += " " + flag
+    env["LDFLAGS"] = ldflags
     return env
 
 
-LibThorVGRecipe.get_recipe_env = _LibThorVG_get_recipe_env_libcxx
+LibThorVGRecipe.get_recipe_env = _LibThorVG_get_recipe_env_libcxx_lm
 '''
 
 
