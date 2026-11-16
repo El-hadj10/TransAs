@@ -14,7 +14,9 @@ geopy>=2.4.0
 # (BUG-001 : la mitigation réelle du SIGSEGV reste le defer côté
 # ui/screens/map_screen.py + bootstrap main.py, pas le pin Pillow.)
 Pillow==13.0.0
-kivy==2.3.0
+# Kivy 2.3.1 contains the upstream GLES glShaderSource typedef fix required
+# by clang 17 in the Android NDK 28 toolchain (Kivy #8557 / PR #8917).
+kivy==2.3.1
 kivymd==1.1.1
 pytest>=7.4.0
 

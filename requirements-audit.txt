@@ -3,7 +3,7 @@
 # (runtime deps) plus the build-time / packaging deps declared in
 # `buildozer.spec` so weekly audits cover the entire APK build chain.
 #
-# Format: pinned ranges (the same as the install commands in buildozer.spec
+# Format: pinned ranges (the same as the install commands in `buildozer.spec`
 # and the in-venv install in `.github/workflows/release.yml`).
 #
 # When the audit pipeline is run, every dependency listed here is checked
@@ -27,5 +27,5 @@ Cython>=0.29.36,<3.0.0
 
 # Packaging deps from `buildozer.spec` (used by python-for-android,
 # not installed in our dev venv but compiled into the APK)
-kivy==2.3.0
+kivy==2.3.1
 kivymd==1.1.1
