@@ -5,7 +5,15 @@
 
 requests>=2.31.0
 geopy>=2.4.0
-Pillow>=10.0.0,<11.0.0
+# 2026-10-27 (NOUR) : montée 11.3.0 → 13.0.0 pour éteindre 71 CVE OSV
+# (toutes fixées par 13.0.0, cf. pip-audit). ATTENTION : ce pin NE suit plus
+# buildozer.spec côté APK — le patch p4a local est encore conçu pour 11.3.0
+# (2 hunks/4 échouent sur 13.0.0, testé en dry-run). Le build APK reste donc
+# sur 11.3.0 jusqu'à adaptation de la recipe p4a — voir la note de suivi
+# dans buildozer.spec § requirements et knowledge.md § BUG-001.
+# (BUG-001 : la mitigation réelle du SIGSEGV reste le defer côté
+# ui/screens/map_screen.py + bootstrap main.py, pas le pin Pillow.)
+Pillow==13.0.0
 kivy==2.3.0
 kivymd==1.1.1
 pytest>=7.4.0

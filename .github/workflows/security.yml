@@ -30,10 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      # Must match the APK toolchain (buildozer.spec pins python3==3.11.11).
+      # Pillow 13 — the first release free of the 62 OSV CVEs affecting 12.x —
+      # requires Python >= 3.11; auditing under 3.10 silently resolves
+      # pillow 12.3.0 and fails the gate.
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install pip-audit
         run: |
