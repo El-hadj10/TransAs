@@ -63,6 +63,10 @@ class GeocodeResult:
 # the elapsed check and fire two requests in quick succession.
 _last_request_ts: float = 0.0
 _rate_lock = threading.Lock()
+# Protect cache reads and the read-modify-write cycle.  ``os.replace`` makes
+# each individual write atomic, but two writers using the same temporary name
+# can still race (and lose an update or raise FileNotFoundError).
+_cache_lock = threading.Lock()
 
 
 def _cache_path() -> Path:
@@ -73,6 +77,12 @@ def _cache_path() -> Path:
 
 def load_cache() -> dict:
     """Read the on-disk JSON cache. Returns ``{}`` if missing or malformed."""
+    with _cache_lock:
+        return _load_cache_unlocked()
+
+
+def _load_cache_unlocked() -> dict:
+    """Read the cache while ``_cache_lock`` is held."""
     path = _cache_path()
     if not path.exists():
         return {}
@@ -84,6 +94,12 @@ def load_cache() -> dict:
 
 def save_cache(cache: dict) -> None:
     """Atomically write the JSON cache."""
+    with _cache_lock:
+        _save_cache_unlocked(cache)
+
+
+def _save_cache_unlocked(cache: dict) -> None:
+    """Write the cache while ``_cache_lock`` is held."""
     path = _cache_path()
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -92,9 +108,10 @@ def save_cache(cache: dict) -> None:
 
 def clear_cache() -> None:
     """Remove the on-disk geocoding cache (mainly for ops/debug)."""
-    path = _cache_path()
-    if path.exists():
-        path.unlink()
+    with _cache_lock:
+        path = _cache_path()
+        if path.exists():
+            path.unlink()
 
 
 def _do_nominatim_request(address: str) -> Optional[Tuple[float, float, str]]:
@@ -154,18 +171,11 @@ def geocode(address: str, *, use_cache: bool = True) -> Optional[GeocodeResult]:
     result = GeocodeResult(lat, lon, display_name, "nominatim")
 
     if use_cache:
-        # NOTE: the cache write sits OUTSIDE ``_rate_lock`` by design.
-        # Two threads racing here would race-read/race-write the same
-        # JSON file, but the end state is correct in both cases:
-        #   * different keys  -> merged; last writer per key wins, all
-        #     keys end up present, idempotent for the user.
-        #   * the same key    -> identical data overwrites itself; the
-        #     upstream HTTP was already serialised by ``_rate_lock``
-        #     so the second write is just a no-op overwrite.
-        # The alternative (locking the disk write too) would couple the
-        # rate-limit timing to filesystem atomicity for very little gain.
-        cache = load_cache()
-        cache[key] = {"lat": lat, "lon": lon, "display_name": display_name}
-        save_cache(cache)
+        # Keep the read-modify-write cycle together: atomic replacement alone
+        # cannot prevent two threads from writing the same temporary path.
+        with _cache_lock:
+            cache = _load_cache_unlocked()
+            cache[key] = {"lat": lat, "lon": lon, "display_name": display_name}
+            _save_cache_unlocked(cache)
 
     return result
