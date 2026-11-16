@@ -170,11 +170,19 @@ android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_
 # Security hardening: disable Android cloud/device backup of app data.
 android.allow_backup = False
 
-# Explicit C++ runtime for the SDL2 bootstrap layer. The p4a bootstrap builds
-# a small native C++ component (for example hid.cpp), and without an STL the
-# linker leaves the operator new/delete symbols unresolved during the create
-# step. This is the common cause of the linker failures seen in CI logs.
-android.stl = c++_shared
+# NOTE (2026-11-16): `android.stl` is NOT a buildozer option — the old line
+# here was inert and never reached p4a. The SDL2 bootstrap
+# (pythonforandroid/bootstraps/_sdl_common/build/jni/Application.mk) ships
+# APP_STL commented out; NDK >= 27 no longer provides libstdc++, and
+# ndk-build's legacy `system` STL then adds `-stdlib=libstdc++`, leaving
+# libSDL2.so with `ld.lld: error: undefined symbol: operator new/delete`.
+#
+# The real fix lives where p4a is prepared, for CI and local builds alike:
+#     find .local/python-for-android/pythonforandroid/bootstraps \
+#          -name Application.mk -exec \
+#          sed -i 's|^# APP_STL := stlport_static.*|APP_STL := c++_shared|' {} +
+# `.github/workflows/release.yml` runs the same sed and fails loudly (exit 9)
+# if it did not land.
 
 # Solid white background behind the launcher icon (matches the cover).
 android.presplash_color = #FFFFFFFF
