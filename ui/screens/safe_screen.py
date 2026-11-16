@@ -989,6 +989,8 @@ class SafeTransAsScreen(BoxLayout):
         # With no typed departure the tour starts where the driver actually
         # is: one fresh fix (no continuous tracking), then a normal
         # optimisation if no fix can be obtained.
+        _logger.info("optimize: start=%r end=%r location_permission=%s",
+                     start_text, end_text, has_permission())
         if not start_text:
             self._optimize_button.disabled = True
             if has_permission():

@@ -191,6 +191,22 @@ def _best_known_fix(max_age_ms: int = MAX_FIX_AGE_MS) -> Optional[Position]:
 
 
 def _request_fresh_fix(timeout_sec: float = FIX_TIMEOUT_SEC) -> Optional[Position]:
+    """Fresh fix, or ``None`` when the Android bridge cannot provide one.
+
+    The listener below is a ``PythonJavaClass`` proxy, which needs
+    ``org.jnius.NativeInvocationHandler`` inside the APK. A build that ships
+    jnius without that class raises ``ClassNotFoundException`` while the
+    proxy is created; that must not abort the whole acquisition, because the
+    caller still has the cached fix to fall back on.
+    """
+    try:
+        return _request_fresh_fix_impl(timeout_sec)
+    except Exception:
+        _logger.exception("location: fresh fix unavailable, using the cached fix")
+        return None
+
+
+def _request_fresh_fix_impl(timeout_sec: float = FIX_TIMEOUT_SEC) -> Optional[Position]:
     """Wait up to ``timeout_sec`` for one fresh location update.
 
     ``requestSingleUpdate`` is deprecated since API 30 but still present in
