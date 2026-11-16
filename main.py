@@ -120,6 +120,15 @@ class TransAsApp(App):
             level=logging.INFO,
             format="%(asctime)s %(name)s %(levelname)s %(message)s",
         )
+        # Kivy's default log mode attaches its handlers to the root logger and
+        # sets ``logging.root`` to NOTSET (kivy/logger.py), so every DEBUG
+        # record from urllib3/requests/PIL reaches logcat: the first boot on
+        # the test tablet produced ~98k logcat lines in 40 s, one per tile
+        # HTTP chunk. Pin the root level and quiet the chatty libraries;
+        # Kivy's own ``[INFO   ]`` lines still come through.
+        logging.getLogger().setLevel(logging.INFO)
+        for _noisy in ("urllib3", "requests", "PIL"):
+            logging.getLogger(_noisy).setLevel(logging.WARNING)
 
         writable = _writable_dir(self)
         db_path = writable / "transas.db"
