@@ -94,3 +94,17 @@ scripts/last-keystore-info.txt
 **/keystore_alias
 **/key.properties
 gradle.properties  # if it ever appears, it may carry signing config
+
+# ─── Local Android toolchain (downloaded / cloned by buildozer) ──────────────
+# ~7 GB of SDK/NDK binaries plus the patched python-for-android clone. Both are
+# re-creatable from buildozer.spec and the scripts in scripts/.
+.android-sdk/
+.local/
+
+# ─── Build logs and spec backups ─────────────────────────────────────────────
+build-*.log
+buildozer-*.log
+buildozer.spec.bak*
+
+# ─── Runtime caches (config.Config.CACHE_DIR, TILE_CACHE_SUBDIR) ────────────
+.cache/
