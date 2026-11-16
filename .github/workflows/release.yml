@@ -368,16 +368,26 @@ jobs:
           # libSDL2.so fails to link with:
           #   ld.lld: error: undefined symbol: operator new(unsigned long)
           #   ld.lld: error: undefined symbol: operator delete(void*)
-          # Force the shared libc++ runtime in every bootstrap Application.mk
-          # BEFORE p4a copies them into bootstrap_builds/.
-          find "${P4A_LOCAL}/pythonforandroid/bootstraps" -name 'Application.mk' \
-              -exec sed -i 's|^# APP_STL := stlport_static.*|APP_STL := c++_shared|' {} +
-          if ! grep -rqs '^APP_STL := c++_shared' \
-              "${P4A_LOCAL}/pythonforandroid/bootstraps"; then
-              echo "::error::APP_STL patch FAILED — SDL2 would link against libstdc++"
+          # Setting APP_STL=c++_shared removes the libstdc++ flag, but ndk-build
+          # still puts NO C++ runtime on a -shared link (run 43950414637: zero
+          # occurrences of -lc++_shared in the whole log), so the symbols stay
+          # undefined. APP_LDFLAGS adds the runtime to every module's link.
+          # Applied to every bootstrap Application.mk BEFORE p4a copies them.
+          while IFS= read -r -d '' app_mk; do
+              sed -i 's|^# APP_STL := stlport_static.*|APP_STL := c++_shared|' "${app_mk}"
+              grep -q '^APP_STL := c++_shared' "${app_mk}" || \
+                  echo 'APP_STL := c++_shared' >> "${app_mk}"
+              grep -q '^APP_LDFLAGS += -lc++_shared' "${app_mk}" || \
+                  echo 'APP_LDFLAGS += -lc++_shared' >> "${app_mk}"
+          done < <(find "${P4A_LOCAL}/pythonforandroid/bootstraps" \
+              -name 'Application.mk' -print0)
+          patched=$(grep -rl '^APP_LDFLAGS += -lc++_shared' \
+              "${P4A_LOCAL}/pythonforandroid/bootstraps" | wc -l)
+          if [[ "${patched}" -lt 4 ]]; then
+              echo "::error::STL patch FAILED — only ${patched} bootstrap Application.mk patched"
               exit 9
           fi
-          echo "::notice::p4a bootstrap APP_STL=c++_shared (SDL2 C++ runtime)"
+          echo "::notice::p4a bootstraps patched (${patched}): APP_STL=c++_shared + APP_LDFLAGS=-lc++_shared"
           # Defensive verification: if either selector survives, the build
           # would still install Cython 3.x. Fail loud with a distinct exit
           # code so the post-mortem is unambiguous.

@@ -178,11 +178,14 @@ android.allow_backup = False
 # libSDL2.so with `ld.lld: error: undefined symbol: operator new/delete`.
 #
 # The real fix lives where p4a is prepared, for CI and local builds alike:
-#     find .local/python-for-android/pythonforandroid/bootstraps \
-#          -name Application.mk -exec \
-#          sed -i 's|^# APP_STL := stlport_static.*|APP_STL := c++_shared|' {} +
-# `.github/workflows/release.yml` runs the same sed and fails loudly (exit 9)
-# if it did not land.
+# append to every bootstrap Application.mk
+#     APP_STL := c++_shared
+#     APP_LDFLAGS += -lc++_shared
+# APP_STL alone only removes `-stdlib=libstdc++`; ndk-build still emits no C++
+# runtime on a `-shared` link, hence the explicit -lc++_shared (verified: the
+# link then carries NEEDED libc++_shared.so and operator new/delete resolve).
+# `.github/workflows/release.yml` performs this patch and fails loudly (exit 9)
+# if fewer than the four bootstrap Application.mk files were touched.
 
 # Solid white background behind the launcher icon (matches the cover).
 android.presplash_color = #FFFFFFFF
