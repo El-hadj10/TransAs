@@ -1,6 +1,6 @@
 """OSRM-backed distance/duration matrix with Haversine fallback.
 
-Single entry point: :func:`get_distance_matrix`. The OSRM public demo
+Single entry point: :func:`get_distance_matrix`. The OSRM public
 endpoint is flaky and rate-limited, so retries are mandatory and a pure
 Haversine fallback keeps the rest of the pipeline alive when offline.
 """
@@ -128,7 +128,7 @@ def get_distance_matrix(
             # essentially always a transport-level failure — never a
             # programmer error such as ``KeyError`` or ``AttributeError``.
             # We therefore fall back to Haversine rather than raising,
-            # keeping the delivery pipeline alive when the OSRM demo is
+            # keeping the delivery pipeline alive when the OSRM public endpoint is
             # unreachable (the whole point of the fallback design).
             last_exc = exc
             if attempt == retries:

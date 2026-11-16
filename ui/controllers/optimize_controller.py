@@ -46,6 +46,8 @@ class OptimizeResult:
     ordered_parcels: List[ParcelInput] = field(default_factory=list)
     total_distance_m: float = 0.0
     matrix_source: str = "Haversine"   # "OSRM" or "Haversine"
+    start_point: Optional[ParcelInput] = None
+    end_point: Optional[ParcelInput] = None
 
 
 # Callback signatures — widened on 2026-07 to expose the ``label`` arg
@@ -83,7 +85,11 @@ class OptimizeController:
         self._on_finished = finished_cb
         self._on_error = error_cb
 
-    def start_geocode_then_optimize(self, parcels: Sequence[ParcelInput]) -> None:
+    def start_geocode_then_optimize(
+        self, parcels: Sequence[ParcelInput], *,
+        start_point: Optional[ParcelInput] = None,
+        end_point: Optional[ParcelInput] = None,
+    ) -> None:
         if self.is_running:
             raise RuntimeError("OptimizeController: a run is already in progress")
         if not parcels:
@@ -93,7 +99,7 @@ class OptimizeController:
         self.is_running = True
         thread = threading.Thread(
             target=self._run_pipeline,
-            args=(list(parcels),),
+            args=(list(parcels), start_point, end_point),
             name="transas.optimize_worker",
             daemon=True,
         )
@@ -108,7 +114,9 @@ class OptimizeController:
     # Worker thread body
     # ------------------------------------------------------------------
 
-    def _run_pipeline(self, parcels: List[ParcelInput]) -> None:
+    def _run_pipeline(self, parcels: List[ParcelInput],
+                      start_point: Optional[ParcelInput] = None,
+                      end_point: Optional[ParcelInput] = None) -> None:
         try:
             # ---- Step 1: geocode pending parcels -----------------
             self._emit_progress(0, len(parcels), "Géocodage…")
@@ -149,17 +157,53 @@ class OptimizeController:
                 )
                 return
 
+            for label, point in (("Départ", start_point), ("Arrivée", end_point)):
+                if point is None or (point.lat is not None and point.lon is not None):
+                    continue
+                self._emit_progress(len(parcels), len(parcels), f"Géocodage {label.lower()}…")
+                result = geocoder.geocode(point.address)
+                if result is None:
+                    _emit_main_thread(self._on_error, RuntimeError(f"{label} introuvable : {point.address}"))
+                    return
+                point.lat, point.lon = result.lat, result.lon
+
             # ---- Step 2: build distance matrix --------------------
             self._emit_progress(len(parcels), len(parcels), "Matrice des distances…")
-            coords = [(p.lat, p.lon) for p in routable]  # type: ignore[arg-type]
+            route_points = ([] if start_point is None else [start_point]) + routable + ([] if end_point is None else [end_point])
+            coords = [(p.lat, p.lon) for p in route_points]  # type: ignore[arg-type]
             matrix = router.get_distance_matrix(coords)
             source = self._infer_matrix_source(matrix, coords)
             self._emit_progress(len(parcels), len(parcels), "Optimisation…")
 
             # ---- Step 3: optimise --------------------------------
-            stops = [{"id": p.id, "lat": p.lat, "lon": p.lon} for p in routable]
-            order = optimizer.optimize(stops, matrix, start=0)
-            ordered_routable = [routable[i] for i in order]
+            start_index = 0 if start_point is not None else None
+            end_index = len(route_points) - 1 if end_point is not None else None
+            stops = [{"id": p.id, "lat": p.lat, "lon": p.lon} for p in route_points]
+            if start_index is not None and end_index is not None:
+                full_order = optimizer.optimize_open_path(
+                    matrix, start=start_index, end=end_index,
+                )
+            elif start_index is not None:
+                # "RÉOPTIMISER D'ICI": the driver's position is the fixed
+                # origin and every pending stop is free. The start point is a
+                # real node of the matrix, so it must also be a node of the
+                # optimisation — previously it was used as a bare index offset
+                # over a matrix that contained it, which misaligned every
+                # subsequent index and could drop a stop from the route.
+                full_order = optimizer.optimize(stops, matrix, start=start_index)
+            elif end_index is not None:
+                # Return point only: optimise an open path that ends there,
+                # with the first pending stop as the free origin.
+                full_order = optimizer.optimize_open_path(
+                    matrix, start=0, end=end_index,
+                )
+            else:
+                full_order = optimizer.optimize(stops, matrix, start=0)
+            fixed = {index for index in (start_index, end_index) if index is not None}
+            ordered_routable = [
+                route_points[index] for index in full_order if index not in fixed
+            ]
+            total = optimizer.route_distance(full_order, matrix)
             final = ordered_routable + unrouted
 
             # ---- Step 4: persist tour ------------------------
@@ -167,14 +211,12 @@ class OptimizeController:
             ordered_ids = [p.id for p in final]
             self._db.save_tour(date_str, ordered_ids)
 
-            total = sum(
-                matrix[order[i]][order[i + 1]] for i in range(len(order) - 1)
-            )
-
             result = OptimizeResult(
                 ordered_parcels=final,
                 total_distance_m=total,
                 matrix_source=source,
+                start_point=start_point,
+                end_point=end_point,
             )
             self._emit_progress(len(parcels), len(parcels), "Terminé ✓")
             _emit_main_thread(self._on_finished, result)
@@ -186,26 +228,33 @@ class OptimizeController:
 
     @staticmethod
     def _infer_matrix_source(matrix, coords) -> str:
-        """Cheap heuristic: a single off-diagonal value outside [200, 100000]
-        meters is impossible for a Haversine great-circle calculation on
-        adjacent urban stops ⇒ matrix came from OSRM."""
+        """Cheap discriminator: OSRM road-distance matrices are not symmetric
+        (one-way streets, ramps) while Haversine great-circle matrices are
+        exactly symmetric (rounding within ``1 %`` of the larger leg).
+
+        Falling back to "Haversine" on a perfectly symmetric OSRM matrix
+        (e.g. an all-two-way route through a small village) is acceptable:
+        the UI label only drives the status-bar badge, not behavior, and the
+        false-positive direction (a real Haversine matrix labeled "OSRM")
+        is what the original bounds heuristic [200, 100_000] produced too
+        often on adjacent urban stops.
+
+        Degenerate case (all-zero / all-None matrix) silently returns
+        "Haversine" since every cell is skipped; router.py never
+        produces such a matrix in practice. NaN cells are also silently
+        treated as Haversine (IEEE 754 NaN comparisons always return
+        False); OSRM responses should not contain NaN.
+        """
         if not matrix or len(matrix) < 2:
             return "Haversine"
         n = len(matrix)
-        # Sample a wider spread than the previous 3×3 top-left for diversity.
-        sample_pairs = [
-            (0, min(1, n - 1)),
-            (0, min(n // 2, n - 1)),
-            (min(n // 2, n - 1), n - 1),
-        ]
-        for i, j in sample_pairs:
-            if i == j:
-                continue
-            v = matrix[i][j]
-            if v is None or v <= 0:
-                continue
-            if v < 200 or v > 100_000:
-                return "OSRM"
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = matrix[i][j], matrix[j][i]
+                if a is None or b is None or a <= 0 or b <= 0:
+                    continue
+                if abs(a - b) > 0.01 * max(a, b):
+                    return "OSRM"
         return "Haversine"
 
     # ------------------------------------------------------------------

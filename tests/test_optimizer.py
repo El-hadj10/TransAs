@@ -117,6 +117,16 @@ def test_optimize_invalid_start_raises():
         optimizer.optimize(stops, matrix, start=42)
 
 
+def test_optimize_open_path_keeps_depot_and_arrival_fixed():
+    matrix = [
+        [0, 1, 9, 20], [1, 0, 2, 9], [9, 2, 0, 1], [20, 9, 1, 0],
+    ]
+    route = optimizer.optimize_open_path(matrix, start=0, end=3)
+    assert route[0] == 0
+    assert route[-1] == 3
+    assert sorted(route) == [0, 1, 2, 3]
+
+
 def test_optimize_raises_when_kmeans_drops_indices(monkeypatch):
     """If ``kmeans_cluster`` returns a partition that drops a stop or
     duplicates one, ``optimize`` must surface a ``RuntimeError`` so the

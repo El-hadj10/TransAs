@@ -98,6 +98,33 @@ def two_opt(route: List[int], matrix: Sequence[Sequence[float]],
     return route
 
 
+def optimize_open_path(matrix: Sequence[Sequence[float]], start: int,
+                       end: int) -> List[int]:
+    """Optimise an open path with immutable start and end indices.
+
+    Unlike a TSP cycle, a delivery route must leave the selected depot and
+    finish at the driver's chosen return point.  The endpoint is held out of
+    nearest-neighbour selection, appended last, then preserved by ``two_opt``.
+    """
+    n = len(matrix)
+    if n == 0:
+        return []
+    if not 0 <= start < n or not 0 <= end < n:
+        raise IndexError("start/end outside distance matrix")
+    if start == end:
+        raise ValueError("start and end must be distinct")
+    remaining = [idx for idx in range(n) if idx not in (start, end)]
+    route = [start]
+    current = start
+    while remaining:
+        next_stop = min(remaining, key=lambda idx: matrix[current][idx])
+        route.append(next_stop)
+        remaining.remove(next_stop)
+        current = next_stop
+    route.append(end)
+    return two_opt(route, matrix)
+
+
 # ---------------------------------------------------------------------------
 # K-Means clustering with K-means++ seeding
 # ---------------------------------------------------------------------------
