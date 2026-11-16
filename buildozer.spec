@@ -10,9 +10,9 @@
 # Packaging identity on the device
 title = TransAs
 package.name = transas
-# Use a France-localised, app-qualified domain: bare ``org.transas`` would
-# collide with any future app claiming that namespace. ``fr.transas.app`` is
-# unique today and readable on the launcher.
+# Keep the package identity already installed on the test device.  Changing
+# either component makes Android treat the build as a separate application
+# and prevents an in-place upgrade.
 package.domain = fr.transas.app
 
 # Source layout
@@ -36,7 +36,47 @@ version.pattern = 0.1
 #
 # CRITICAL PIN: Kivy 2.3.0 + KivyMD 1.1.1 are stable here with Python 3.11
 # and Cython 0.29.36 when p4a recipes are aligned to the same python version.
-requirements = python3==3.11.11,cython==0.29.36,kivy==2.3.0,kivymd==1.1.1,requests,Pillow>=10.0.0,<11.0.0,geopy
+# CRITICAL PIN (2026-07-13, ROLLBACK) : retour à ``Pillow==11.3.0`` après que
+# la tentative de downgrade vers 10.2.0 ait cassé le build (4 rebuilds échoués).
+# Le patch p4a local ``.local/python-for-android/pythonforandroid/recipes/Pillow/
+# setup.py.patch`` est conçu pour Pillow 11.3.0 uniquement (lignes 156 et 514
+# de setup.py) — les hunks ne s'appliquent pas à 10.2.0. Patcher la recipe p4a
+# pour 10.2.0 = 1-2h d'investigation + 1-2 builds d'essai → non rentable.
+#
+# La vraie cause du SIGSEGV à fault address 0x28 (BUG-001) reste débattue :
+# Pillow 11.x est suspecté mais pas prouvé. Les **fixes défensifs** (defer de
+# ``kivy.core.image.Image`` et ``ui.services.folium_renderer`` dans
+# ``ui/screens/map_screen.py``) + try/except bootstrap dans ``main.py`` sont
+# **la vraie mitigation** : ils repoussent le load natif Pillow hors du chemin
+# critique de SDLThread. Le downgrade Pillow était une **mesure conservative
+# additionnelle**, pas le fix principal.
+#
+# Action de suivi si SIGSEGV persiste après ce rebuild :
+#   1. Capturer ``/tmp/launch2.log`` et grep pour ``SIGSEGV`` + ``PyObject_Vectorcall``
+#   2. Si Pillow 11.x CONFIRMÉ en cause → patcher la recipe p4a (cf. report_bug.md
+#      "Actions de rebuild post-fix — Plan B")
+#   3. Sinon → le problème est ailleurs (libjpeg p4a, NDK r25c, etc.)
+#
+# Référence complète : ``report_bug.md`` BUG-001 + section "Décision 2026-07-13".
+#
+# SUIVI CVE 2026-10-27 (NOUR) : ``requirements.txt`` est monté à Pillow==13.0.0
+# (71 CVE OSV éteintes côté dev/CI — cf. pip-audit). MONTEE APK COMPLÈTE
+# 2026-10-27 : le patch p4a a été réécrit pour setup.py 13.0.0 (3 hunks,
+# sémantique identique : ren = tuple split(":"), pkg-config skippé, sys.prefix
+# enlevé, guessing plateforme/standard /usr/local désactivés). Ancien patch
+# 11.3.0 conservé : .local/python-for-android/.../recipes/Pillow/
+# setup.py.patch.bak-11.3.0-2026-10-27. REBUILD DE VALIDATION RÉUSSI le
+# 2026-10-27 21:30 : Pillow 13.0.0 cross-compilé depuis la source via le patch
+# (pyproject: "Successfully built pillow-13.0.0-cp311-cp311-android_21_arm64_v8a.whl"),
+# bundle arm64 vérifié (pillow-13.0.0.dist-info + tous les modules .so aarch64).
+# APK test : bin/transas-0.1-arm64-v8a-debug.apk. Test d'installation sur
+# appareil à faire (validation runtime).
+# ``,android`` (the p4a recipe, NOT the ``androidx.*`` namespace) is needed for
+# ``from android import activity`` in ``ui/services/speech.py`` so the
+# "Ajouter par voix" entry point can use the Android RecognizerIntent
+# bridge. Without it the import raises ImportError on APK and the button
+# stays silently inert (the in-app try/except already hides the failure).
+requirements = python3==3.11.11,cython==0.29.36,kivy==2.3.0,kivymd==1.1.1,requests,pillow==13.0.0,geopy,android
 
 # Portrait orientation — one-handed use in the field (cf. manifest.md §2).
 orientation = portrait
@@ -53,7 +93,7 @@ orientation = portrait
 # No separate ``presplash.filename`` here on purpose: a launcher icon squashed
 # into a full-screen splash looks wrong. Drop a dedicated 1280×1920 splash at
 # ``cover/presplash.jpg`` later and uncomment the line below when you do.
-icon.filename = %(source.dir)s/cover/icon.jpg
+icon.filename = %(source.dir)s/cover/icon.png
 # presplash.filename = %(source.dir)s/cover/presplash.jpg
 
 # ---------------------------------------------------------------------------
@@ -68,6 +108,10 @@ android.minapi = 21
 # Build arm64 only for faster, more reliable local APK generation.
 android.archs = arm64-v8a
 
+# Buildozer 1.6 defaults to AAB for `android release`; force APK output so we
+# can sideload and validate the exact release artifact on-device.
+android.release_artifact = apk
+
 # SDK location.
 #
 # Use a project-local SDK path so Buildozer can create and populate the
@@ -79,7 +123,7 @@ android.sdk_path = %(source.dir)s/.android-sdk
 # Use a project-local NDK path so Buildozer can populate the toolchain in a
 # writable location. This avoids the permission issue on the old global path
 # and keeps the SDK/NDK under the repository tree for local builds.
-android.ndk_path = %(source.dir)s/.android-sdk/ndk/25.2.9519653
+android.ndk_path = %(source.dir)s/.android-sdk/ndk/28.0.13004108
 
 # CRITICAL FIX (iteration 33): p4a recipe override — THE surgical fix.
 #
@@ -101,7 +145,7 @@ android.ndk_path = %(source.dir)s/.android-sdk/ndk/25.2.9519653
 # The clone lives under source.dir so the same relative path works on local
 # dev (`bash scripts/prepare_cover.sh && buildozer android debug`) after
 # running the same `git clone + sed` from the workflow step manually.
-android.p4a_dir = %(source.dir)s/.local/python-for-android
+p4a.source_dir = %(source.dir)s/.local/python-for-android
 
 # CRITICAL FIX (iteration 20):
 # Disable p4a's internal sdkmanager invocation. The p4a wrapper script
@@ -116,7 +160,15 @@ android.skip_update = 1
 
 # INTERNET is required for Nominatim (address -> GPS) and OSRM (distance matrix).
 # ACCESS_NETWORK_STATE lets Kivy / requests detect offline mode gracefully.
-android.permissions = INTERNET,ACCESS_NETWORK_STATE
+# ACCESS_FINE/COARSE_LOCATION (2026-10-27) power the "RÉOPTIMISER D'ICI" action:
+# ``ui/services/location.py`` reads the driver's position once, then the
+# controller reorders only the remaining stops. COARSE alone is enough when the
+# driver only grants the approximate location (Android 12+ radio button).
+# Both are runtime permissions: the app asks on first use, never at boot.
+android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION
+
+# Security hardening: disable Android cloud/device backup of app data.
+android.allow_backup = False
 
 # Explicit C++ runtime for the SDL2 bootstrap layer. The p4a bootstrap builds
 # a small native C++ component (for example hid.cpp), and without an STL the
@@ -160,5 +212,5 @@ android.wakelock = False
 # Build settings
 # ---------------------------------------------------------------------------
 [buildozer]
-log_level = 2
+log_level = 1
 warn_on_root = 1
