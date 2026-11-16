@@ -3,7 +3,9 @@
 > **Public** : toi / un dev qui veut tester l'APK `bin/transas-0.1-arm64-v8a-debug.apk`
 > sur son propre téléphone avant qu'une version signée release existe.
 >
-> **Date** : 2026-07-13
+> **Date** : 2026-07-13 · **Révision** : 2026-11-16 — l'écran terrain
+> `SafeTransAsScreen` remplace l'ancienne UI Import/Map ; recette complète dans
+> `docs/INSTALL_TEST_SAFE_SCREEN.md`
 >
 > **Contexte** : le repo TransAs est **privé** ; aucun risque de distribution
 > involontaire avec un APK signé-debug.
@@ -28,7 +30,7 @@
 |---|--------|---------|
 | 1 | Avoir `adb` dans le `$PATH` | Livré avec `android-sdk/platform-tools`. Test : `which adb` |
 | 2 | Avoir le SDK NDK + cmdline-tools en place | Sinon suivre `knowledge.md` § "APK build prerequisites" |
-| 3 | Avoir `bin/transas-0.1-arm64-v8a-debug.apk` (~28 MB) | Produit par iter-36 (`a0c18d7`) en CI |
+| 3 | Avoir `bin/transas-0.1-arm64-v8a-debug.apk` (29,7 MB) | `buildozer android debug` en local, ou artifact du workflow CI — md5 de référence `a5698e3651be15fe38d0e96e440c2382` |
 
 ## 3. Premier contact adb — le bug « device unauthorized »
 
@@ -185,10 +187,13 @@ adb logcat -d -v threadtime | grep -E 'python|Python|Kivy|FATAL|AndroidRuntime|t
 #   - "FATAL EXCEPTION: main"  → crash dur, full stack à inspecter
 #   - "sqlite3.OperationalError"  → DB path problème (cf. main.py:_writable_dir)
 #   - "Material Design Icons" / "KivyMD: missing font"  → MDUI assets manquants
-#   - "java.io.FileNotFoundException"  → asset path cassé (MapScreen ui/_runtime_map.png)
+#   - "java.io.FileNotFoundException"  → asset introuvable (tuiles OSM, cache local)
 #   - "dlopen failed: library \"libpython3.11.so\" not found"  → casse-native
 #   - "Cannot find module 'folium'" ou "No module named 'X'"  → requirements manquant
-#   - "cannot identify image file" / "UnidentifiedImageError"  → Pillow decode fail (MapScreen)
+#   - "cannot identify image file" / "UnidentifiedImageError"  → Pillow n'arrive pas à décoder une tuile OSM
+#   - "ClassNotFoundException: org.jnius.NativeInvocationHandler"  → proxy jnius absent :
+#     le fix GPS frais échoue, repli sur la position en cache (pas un crash)
+#   - "[voice]" / "[optimize]" dans les lignes INFO  → trace de la dictée et du choix de départ
 #   - "CalledProcessError"  → subprocess p4a bootstrap crash (rare, vu sur NDK r25c)
 #   - "Start proc" répété pour fr.transas.app qui ne stabilise jamais
 #     (heuristique : compter "Start proc.*fr.transas.app" sur 5 s ;
@@ -287,14 +292,44 @@ préalable. C'est pour ça qu'on ne livre jamais un release avant que le debug s
 [ ] adb install bin/transas-0.1-arm64-v8a-debug.apk
 [ ] adb shell am start -n <nom.noté.ci.dessus>/org.kivy.android.PythonActivity
 [ ] UI : vérifier que SafeTransAsScreen s'affiche (MENU / TransAs / OPTIONS + carte OSM)
-[ ] Recette fonctionnelle complète : suivre `docs/INSTALL_TEST_SAFE_SCREEN.md`
+[ ] Voix : OPTIONS → « Ajouter par voix » → l'arrêt dicté apparaît directement dans la liste
+[ ] Position : « Départ » vide → OPTIMISER → « Tournée optimisée depuis ta position · X,X km · OSRM »
+[ ] Recette fonctionnelle complète (T1→T16) : suivre `docs/INSTALL_TEST_SAFE_SCREEN.md`
 [ ] Si crash : `adb logcat '*:S' AndroidRuntime:E python:D Python:D Kivy:D crasher:E p4a:D -v threadtime > /tmp/launch.log` (zsh : quoter le `*`) → m'envoyer le contenu pour diagnostic
 [ ] Quand fini : adb uninstall <le.même.nom.que.lancé> (wipe complet)
 [ ] Plus tard, quand signed-release dispo : adb install transas-*-release.apk
 ```
 
-## 9. Liens de référence
+## 9. Recette fonctionnelle de l'écran terrain
 
+La recette détaillée, case par case (T1 → T16), est dans
+**`docs/INSTALL_TEST_SAFE_SCREEN.md`** (les anciens écrans Import/Map ne font
+plus partie de l'app). Résumé des contrôles à passer après chaque installation :
+
+| # | Contrôle | Attendu |
+|---|---|---|
+| T1 | Premier lancement, base vide | `SafeTransAsScreen` affiché, statut « Ajoute des arrêts pour commencer la tournée. », carte OSM |
+| T2/T3 | Saisie d'adresse + clavier | champ visible au-dessus du clavier ; RETOUR ferme le clavier **sans** quitter l'app |
+| T4 | `+ STOP` avec 3 adresses | « Arrêt #N ajouté — appuie sur OPTIMISER. », KPI « 0 livré · 3 en attente » |
+| T5 | `OPTIMISER`, « Départ » vide | permission localisation (1ʳᵉ fois) puis « Tournée optimisée depuis ta position · X,X km · OSRM » ; repli sans départ si refus ou fix introuvable |
+| T6 | « Départ » **et** « Arrivée » renseignés | l'ordre commence au départ, finit à l'arrivée, aucun arrêt perdu |
+| T7 | `OPTIONS` → « Réoptimiser depuis ma position » | « Position trouvée — réoptimisation depuis ici… » puis tournée recalculée |
+| T8 | `OPTIONS` → import CSV / collé | « N arrêts importés. Appuie sur OPTIMISER. », doublons ignorés |
+| T9 | `OPTIONS` → « Ajouter par voix » | la dictée crée l'arrêt directement (champ vidé), annulation = message, pas de crash |
+| T10 | `OPTIONS` → navigation | l'app de cartes du téléphone s'ouvre sur le prochain arrêt |
+| T11 | `OPTIONS` → partage / impression | feuille de partage Android / service d'impression |
+| T12 | `OPTIONS` → suppression des arrêts | confirmation puis liste vidée |
+| T13 | `LIVRÉ` sur un arrêt | KPI « 1 livré · N en attente », l'arrêt sort de la navigation |
+| T14 | MENU → « Créer un nouveau trajet » | Départ/Arrivée vidés, arrêts conservés |
+| T15 | Retour dans l'app, écran allumé | UI intacte (un écran noir = téléphone en veille, `Not drawing due to screen off`) |
+| T16 | Mode avion | repli `Haversine`, message explicite, aucun crash |
+
+> En cas d'écart : joindre une capture et les lignes `python` du `logcat` (§5).
+> Les numéros T1→T16 sont ceux des tables de la recette détaillée.
+
+## 10. Liens de référence
+
+- `docs/INSTALL_TEST_SAFE_SCREEN.md` — recette Android complète T1→T16 (référence)
 - `REPORT.md` §6 + §9 — actions P0/P1/P2/P3 (signature release + kivymd fix + chemin vers APK signé)
 - `knowledge.md` § "APK build prerequisites" — toolchain complet pour rebuilder en local
 - `.gitignore` (à la racine) — pourquoi le dossier `bin/` n'est PAS versionné (rebuild à chaque fois via `buildozer android debug`)
