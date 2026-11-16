@@ -1,0 +1,8 @@
+{
+  "area": "Zone de livraison 95350",
+  "stops_requested": 90,
+  "departure": "DPD Gennevillier 92",
+  "status": "awaiting_public_address_import",
+  "address_source": "Base Adresse Nationale or OpenStreetMap",
+  "created_at": "2026-07-14"
+}

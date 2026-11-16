@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/KivyMD-1.1.1-c2185b?style=for-the-badge&logo=kivy&logoColor=white" />
   <img src="https://img.shields.io/badge/Buildozer-1.5%2B-00cc66?style=for-the-badge&logo=buildkite&logoColor=white" />
   <img src="https://img.shields.io/badge/Android-14_(API_34)-3DDC84?style=for-the-badge&logo=android&logoColor=white" />
-  <img src="https://img.shields.io/badge/Tests-46_passing-00cc66?style=for-the-badge&logo=pytest&logoColor=white" />
+  <img src="https://img.shields.io/badge/Tests-64_passing-00cc66?style=for-the-badge&logo=pytest&logoColor=white" />
 </p>
 
 <p align="center">
@@ -53,8 +53,8 @@
 
 | # | Feature | Cible |
 |---|---------|-------|
-| 6 | **UI Kivy/KivyMD** (`main.py` + `ui/screens/`) | Étape 3 |
-| 7 | **Premier build APK** end-to-end (1–3 h, ~5 GB sur disque) | Étape 4 |
+| 6 | **UI Kivy/KivyMD** (`main.py` + `ui/screens/`) | ✅ Livré Étape 3 |
+| 7 | **Premier build APK** end-to-end (1–3 h, ~5 GB sur disque) | ✅ Livré (md5 `98730137…`, 28.9 MB) |
 
 ### 🔮 Roadmap future
 
@@ -212,6 +212,13 @@ pytest tests/ -v
 export ANDROIDSDK=$HOME/Android/Sdk
 export JAVA_HOME=$(dirname $(dirname $(readlink -f $(command -v javac))))
 buildozer android debug
+
+# Si plusieurs JDK sont installés (Ubuntu 26.04 livre JDK 25), Gradle peut
+# choisir un JRE sans compilateur : « Toolchain ... JAVA_COMPILER ». Épingler
+# JDK 17 et mettre le venv du projet dans le PATH (cython + buildozer) :
+#   export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+#   export PATH="$JAVA_HOME/bin:$PWD/.venv/bin:$PATH"
+#   buildozer android debug
 
 # Premier APK : 1–3 heures, ~5 GB sur disque.
 # Builds suivants : ~5 min (cache gradle/p4a chaud).
@@ -379,7 +386,7 @@ Quand l'app est mature (5+ versions publiées sur GitHub Releases, bugs connus d
 | 4.2 | **Premier build APK** via buildozer | ⏳ | — | Realistic time: **1–3 h** sur machine vierge, ~5 GB sur disque |
 | 5 | Distribution (sideloading / F-Droid / Play Store) | ⏳ | — | Pas de commission Play Store tant que pas prêt |
 
-**Total à ce jour :** 46 tests verts ✅ · APK non encore compilé (Étape 3/4 manquantes).
+**Total à ce jour :** 64 tests verts ✅ · APK `bin/transas-0.1-arm64-v8a-debug.apk` (md5 `d227de73a2716da4959c0c6b82ef0150`, ~29.1 MB) rebuilt 2026-07-15, **installé via adb sur SM_S928B (Adreno 750)** et vérifié vivant après 10 s (PID vivant, logcat clean — Adreno (TM) 750 renderer OK). Plan K retiré du code ; le chemin natif suffit (cf. §Troubleshooting).
 
 ---
 
@@ -418,6 +425,51 @@ Quand l'app est mature (5+ versions publiées sur GitHub Releases, bugs connus d
 MIT — libre d'utilisation, modification, redistribution avec attribution.
 
 ---
+
+## 🩹 Troubleshooting — Adreno SIGSEGV (BUG-010) & safety net
+
+> **Statut 2026-07-15** : **Plan K retiré** de `main.py` (l'approade monkey-patch
+> KivyMD shadow canvas n'a jamais été appelée en pratique — 37 itérations en 2026-07-14
+> l'ont laissée en code mort). On s'appuie désormais sur le chemin natif : l'APK
+> `bin/transas-0.1-arm64-v8a-debug.apk` (md5 `d227de73a2716da4959c0c6b82ef0150`,
+> 28.9 MB) **est installable via adb et ne crash pas** sur le device de référence.
+> Il sert de **safety net** : toute régression non liée à Adreno peut se résoudre
+> par `adb install -r` de ce binaire précis.
+
+### Adreno 619/750 (Samsung S24 Ultra, SM-S928B, etc.) — toujours hors scope
+
+La cause racine du crash reste `libGLESv2_adreno.so` → `kivy.graphics.vbo.so` →
+`kivy.graphics.compiler.so`, un bug driver C-layer **hors de portée de Python**.
+L'ancienne approche Plan K ne le corrige pas ; c'est documenté dans
+`report_bug.md` §"Plan K v2 outcome" pour archive.
+
+**Si un device Adreno est la cible** :
+
+1. Vérifier que le safety net APK (md5 `98730137…`) s'installe sans crasher.
+2. Si oui → BUG-010 n'est PAS sur ce device, et chaque amélioration future
+   peut être rebuildée librement.
+3. Si non → le device est Adreno-cassé. Pivots : (a) Plan J — NDK r28c + Kivy 2.3.1
+   + Cython 3+ sur machine costaude 16 GB+ (40-50 % de chance de bypass) ; (b)
+   accepter le hors-scope Adreno et distribuer via F-Droid/Mali/PowerVR (couvre
+   ~70 % du parc).
+
+### Logcat — filtres utiles
+
+```bash
+# Tous les plantages driver natif (SDLThread, libGLESv2_adreno) :
+adb logcat -d -v threadtime | grep -E 'SIGSEGV|FATAL|libGLESv2_adreno|kivy\.graphics'
+
+# Erreurs Python bootstrap (captées par le try/except dans main.py) :
+adb logcat -d -s python | grep transas.bootstrap
+```
+
+### Rollback rapide sur le safety net
+
+```bash
+adb install -r bin/transas-0.1-arm64-v8a-debug.apk
+adb shell am force-stop fr.transas.app.transas
+adb shell am start -n fr.transas.app/org.kivy.android.PythonActivity
+```
 
 ## 🔒 Sécurité
 
