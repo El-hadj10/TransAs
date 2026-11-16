@@ -388,6 +388,33 @@ jobs:
               exit 9
           fi
           echo "::notice::p4a bootstraps patched (${patched}): APP_STL=c++_shared + APP_LDFLAGS=-lc++_shared"
+          # libthorvg is built with meson, not ndk-build: MesonRecipe writes its
+          # cross file link args from env LDFLAGS, so the Application.mk patch
+          # above never reaches it and libthorvg-1.so fails with undefined
+          # std::__ndk1::* / __cxa_* symbols (run 43953118690). Append a small
+          # env override to the recipe instead.
+          cat >> "${P4A_LOCAL}/pythonforandroid/recipes/libthorvg/__init__.py" <<'PYEOF'
+
+# TransAs (2026-11-16): meson cross-file link args come from LDFLAGS; NDK r27+
+# ships no libstdc++, so link libc++_shared explicitly.
+_LibThorVG_get_recipe_env = LibThorVGRecipe.get_recipe_env
+
+
+def _LibThorVG_get_recipe_env_libcxx(self, arch, **kwargs):
+    env = _LibThorVG_get_recipe_env(self, arch, **kwargs)
+    if "-lc++_shared" not in env.get("LDFLAGS", ""):
+        env["LDFLAGS"] = env.get("LDFLAGS", "") + " -lc++_shared"
+    return env
+
+
+LibThorVGRecipe.get_recipe_env = _LibThorVG_get_recipe_env_libcxx
+PYEOF
+          if ! grep -q '_LibThorVG_get_recipe_env_libcxx' \
+              "${P4A_LOCAL}/pythonforandroid/recipes/libthorvg/__init__.py"; then
+              echo "::error::libthorvg LDFLAGS patch did not land"
+              exit 10
+          fi
+          echo "::notice::libthorvg recipe pinned to -lc++_shared (meson)"
           # Defensive verification: if either selector survives, the build
           # would still install Cython 3.x. Fail loud with a distinct exit
           # code so the post-mortem is unambiguous.
