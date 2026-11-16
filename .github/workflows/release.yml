@@ -46,7 +46,11 @@ jobs:
       # configure), the Build APK step now installs host gcc and exports
       # `CC_FOR_BUILD=gcc` so autoconf's capability probes use gcc instead
       # of clang while the actual cross-compile still uses NDK clang-14.
-      ANDROID_NDK_VERSION: 25.2.9519653
+      # Must be the NDK that buildozer.spec pins (28.0.13004108): the Build
+      # APK step exports this directory as ANDROIDNDK and rewrites
+      # android.ndk_path with it, so a different major version here makes
+      # p4a look for a toolchain that is not installed.
+      ANDROID_NDK_VERSION: 28.0.13004108
       # cmdline-tools (a.k.a. "tools") pin — DRY source for both
       # setup-android@v4's input AND the iter-24 alias symlink below.
       # Bump this here to upgrade the whole pipeline; bump-and-forget.
