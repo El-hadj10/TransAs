@@ -57,10 +57,13 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      # Pillow 13 (the first release free of the 12.x OSV CVEs) requires
+      # Python >= 3.11, so the host interpreter that resolves
+      # requirements.txt must not stay on 3.10.
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Set up OpenJDK 17 (Temurin)
         uses: actions/setup-java@v4
