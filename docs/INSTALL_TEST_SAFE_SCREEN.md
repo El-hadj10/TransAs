@@ -5,8 +5,9 @@
 > dictée, import CSV, navigation, partage/impression).
 >
 > **APK de référence** : `bin/transas-0.1-arm64-v8a-debug.apk`
-> — 29 730 612 octets, md5 `ec08c3935e4757964d5b1a31578b3e5b`,
-> build `clean` p4a #57 (NDK 28.0.13004108, Python 3.11.11, Pillow 13.0.0).
+> — 29 739 093 octets, md5 `a5698e3651be15fe38d0e96e440c2382`,
+> build incrémental (NDK 28.0.13004108, Python 3.11.11, Pillow 13.0.0),
+> dictée et départ temps réel vérifiés sur S24 le 2026-11-16.
 >
 > **Package** : `fr.transas.app.transas` — **activité** :
 > `org.kivy.android.PythonActivity` (vérifié par `aapt dump badging`).
@@ -198,6 +199,7 @@ Cocher au fur et à mesure ; noter le message de statut observé (colonne droite
 | Étape | Attendu |
 |---|---|
 | `OPTIONS` → « Réoptimiser depuis ma position » | demande de permission Android (1ʳᵉ fois) |
+| `OPTIMISER L'ORDRE` avec « Départ » vide | même départ temps réel (permission demandée), puis « Tournée optimisée depuis ta position · X,X km · OSRM » — cf. T5 |
 | Autoriser | « Position trouvée — réoptimisation depuis ici… » puis tournée recalculée depuis le point GPS |
 | Refuser la permission (tester après révocation) | « Localisation refusée — saisis le départ à la main. » — pas de crash |
 | Refuser puis réessayer | « Autorise la localisation pour partir d'ici. » |

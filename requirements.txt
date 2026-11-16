@@ -1,6 +1,6 @@
 # TransAs — runtime dependencies (Step 1 core + Step 3 UI + build chain).
 # Kivy/KivyMD are pinned to versions whose python-for-android (p4a)
-# recipes are known-stable on NDK r26d — see ``knowledge.md`` §
+# recipes are known-stable on NDK 28.0.13004108 — see ``knowledge.md`` §
 # "APK build prerequisites" / ``buildozer.spec`` § "requirements".
 
 requests>=2.31.0

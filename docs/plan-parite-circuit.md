@@ -22,13 +22,17 @@
 | Tournée du jour persistée (SQLite), statut livré/pending | ✅ `database/` |
 | Navigation vers l'app du choix (`geo:` intent) | ✅ `ui/services/navigation.py` |
 | Carte offline (canvas primitives, rendu PNG Pillow) | ✅ `safe_screen.RouteMap` + `folium_renderer` |
-| **Position GPS courante du livreur** | ✅ `ui/services/location.py` + bouton « RÉOPTIMISER D'ICI » (27/10/2026) |
+| **Position GPS courante du livreur** | ✅ `ui/services/location.py` — bouton « RÉOPTIMISER D'ICI » (27/10/2026) **et** départ automatique d'OPTIMISER (16/11/2026) |
 | **Preuve de livraison (photo/note/horodatage)** | ❌ `mark_delivered()` = simple UPDATE status |
 | **ETA par arrêt** | ❌ `eta_text=""` codé en dur ; matrice sans durées |
 
 ---
 
 ## Fonction 1 — Réoptimisation en direct depuis ma position ⭐ priorité haute
+
+> **État au 16/11/2026** : le départ temps réel n'est plus réservé au bouton
+> « RÉOPTIMISER D'ICI » — `OPTIMISER L'ORDRE` part aussi de la position
+> courante quand « Départ » est vide (voir l'extension en fin de section).
 
 **Comportement Circuit visé** : le livreur, en cours de tournée, appuie sur
 « optimiser les arrêts restants » ; l'app part de sa position GPS actuelle et
@@ -37,7 +41,7 @@ réordonne uniquement les colis non livrés.
 **Écart TransAs** : `_optimize()` n'utilise que le champ texte « Départ » ;
 aucune géolocalisation (le manifeste ne déclarait que `INTERNET,
 ACCESS_NETWORK_STATE`). Les colis livrés sont déjà exclus (`list_pending()`),
-la moitié du besoin existait.
+la moitié du besoin existait. **Comblé le 16/11/2026** — voir l'extension en fin de section.
 
 **Implémenté le 27/10/2026** :
 1. `buildozer.spec` : `android.permissions` inclut désormais
@@ -66,6 +70,25 @@ demandées au démarrage).
 5. Repli sans GPS (desktop, permission refusée, fix introuvable) : message
    explicite dans la barre de statut et bouton ré-activé ; le champ « Départ »
    manuel reste la voie de secours (aucune adresse inventée).
+
+**Extension 16/11/2026 — départ temps réel sur OPTIMISER** :
+- `_optimize()` ne se contente plus du champ « Départ » : quand il est vide,
+  elle obtient **un** fix (`request_position`, 12 s max) puis optimise depuis
+  la position du livreur ; la permission Android est demandée au premier
+  appui, et un refus comme un fix introuvable basculent sur une tournée sans
+  départ (aucun blocage, bouton ré-activé).
+- Sur l'appareil, la création du listener `PythonJavaClass` du fix frais lève
+  `ClassNotFoundException: org.jnius.NativeInvocationHandler` : c'était fatal
+  et l'acquisition s'arrêtait **avant** le repli cache. `_request_fresh_fix`
+  est maintenant non fatal et retombe sur `getLastKnownLocation` (≤ 10 min).
+- Vérifié sur S24 le 16/11/2026 : statut « Tournée optimisée depuis ta
+  position · 37,3 km · OSRM », 5 arrêts réordonnés, tournée sauvegardée.
+- Diagnostic conservé dans logcat : `[optimize] start='' end=''
+  location_permission=True`, puis `[optimize] no position fix (…)` si le repli
+  échoue aussi.
+- Limite connue : le fix frais dépend du proxy jnius absent de cet APK ; seul
+  le cache fournit la position. Un helper Java (`android.add_src`) serait la
+  vraie correction pour un fix frais hors cache.
 
 **Critères d'acceptation** :
 - Sur S24, 3 arrêts en attente, 1 livré : le nouvel ordre commence à la position

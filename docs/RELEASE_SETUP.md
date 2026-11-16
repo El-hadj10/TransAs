@@ -7,7 +7,7 @@ que le repo passe en privé. Tout est déjà en place côté code :
 - ✅ Étape 1+2 (core + database) — 46 tests verts
 - ✅ Étape 3 (UI Kivy/KivyMD) — 14 tests verts
 - ✅ `buildozer.spec` (avec Pillow)
-- ✅ `.github/workflows/release.yml` (build APK signé sur tag `v*`)
+- ✅ `.github/workflows/release.yml` (build APK signé sur tag `v*` ; deps résolues en Python 3.11, SDK/NDK remplacés par ceux du runner avant `buildozer`)
 - ✅ `.github/workflows/security.yml` (audit pip-audit + bandit + shellcheck + gitleks)
 - ✅ `scripts/setup_keystore.sh` + `scripts/sign_release.sh`
 - ✅ `SECURITY.md` + `requirements-audit.txt` + `.bandit`
@@ -103,8 +103,7 @@ git push --tags
 ```
 
 Ouvre l'onglet **Actions** sur GitHub : `release.yml` se déclenche sur le
-push du tag. Le job dure **1 à 3 heures** (premier build NDK r26d, sans
-cache). Trois APK seront uploadés dans
+push du tag.Le job dure **1 à 3 heures** (premier build NDK 28.0.13004108, sans cache). Trois APK seront uploadés dans
 **https://github.com/El-hadj10/TransAs/releases/tag/v0.1** :
 
 ```
@@ -166,7 +165,8 @@ Une fois le build terminé (~1-3 h après le tag) :
 | `Decode release keystore from secret` fails | mauvais base64 ou fichier tronqué | refais `base64 -w0 transas-release.jks`, ne copie pas le `+` final |
 | `JAVA_HOME is not set` | le job essaye d'utiliser Temurin | normale, on bascule déjà via `actions/setup-java@v4` — vérifie que la PR a été mergée |
 | `apkanalyzer: command not found` | SDK build-tools 34.0.0 manquant | le job télécharge normalement, vérifie qu'il n'y a pas eu d'erreur réseau |
-| `Build failed: ndk r26d not found` | p4a veut une version plus récente | épingle `android.ndk = 26.3.11579264` dans buildozer.spec |
+| `Build failed: ndk … not found` | `android.ndk_path` ne correspond pas au NDK installé | `buildozer.spec` épingle `28.0.13004108` ; `release.yml` réécrit `android.ndk_path` vers `$ANDROIDNDK` du runner |
+| `build-tools folder not found …/.android-sdk/build-tools` | `android.sdk_path` pointe vers le `.android-sdk` local, gitignoré et absent du runner | déjà corrigé : `release.yml` réécrit `android.sdk_path` vers `$ANDROIDSDK` ; ne pas réintroduire de chemin en dur |
 | Le tag push passe mais aucun APK n'est uploadé | le tag ne matche pas `refs/tags/v*` | le tag doit être `v0.1` exactement (pas `0.1`, pas `release-0.1`) |
 | `Permission denied` au loaddings des libs SDL | le keystore est corrompu | re-run `bash scripts/setup_keystore.sh` et re-copie les 4 secrets |
 

@@ -179,7 +179,7 @@
 
 <div align="center">
 
-![NDK](https://img.shields.io/badge/Android_NDK_r26d-3DDC84?style=for-the-badge&logo=android&logoColor=white)
+![NDK](https://img.shields.io/badge/Android_NDK_28.0.13004108-3DDC84?style=for-the-badge&logo=android&logoColor=white)
 ![JDK 17](https://img.shields.io/badge/JDK_17-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
 ![Gradle](https://img.shields.io/badge/Gradle-02303A?style=for-the-badge&logo=gradle&logoColor=white)
 ![Cython](https://img.shields.io/badge/Cython_ABI_Stable-00cc66?style=for-the-badge&logo=python&logoColor=white)
@@ -311,7 +311,7 @@ bash scripts/prepare_cover.sh                                 # idempotent
 # Couvre le cas où cover/file.enc (un vrai JPEG) doit devenir cover/icon.jpg
 
 # Toolchain complète : voir cover/README.md § Prerequisite toolchain
-# 1-3h sur machine vierge · 5 GB sur disque · NDK r26d pin
+# 1-3h sur machine vierge · 5 GB sur disque · NDK 28.0.13004108 pin
 export ANDROIDSDK=$HOME/Android/Sdk
 export JAVA_HOME=$(dirname $(dirname $(readlink -f $(command -v javac))))
 buildozer android debug                                        # → bin/transas-*.apk

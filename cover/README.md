@@ -57,7 +57,7 @@ than a clean pre-flight check.
 | Android cmdline   | latest                            | download from `developer.android.com`    |
 | SDK platform 34   | required                          | `sdkmanager "platforms;android-34"`      |
 | Build-tools       | 34.0.0                            | `sdkmanager "build-tools;34.0.0"`        |
-| Android NDK       | **r26d (26.3.11579264)**          | `sdkmanager "ndk;26.3.11579264"`         |
+| Android NDK       | **28.0.13004108**                 | `sdkmanager "ndk;28.0.13004108"`          |
 
 ### Linux host build libraries (mandatory on Debian/Ubuntu)
 
@@ -112,11 +112,14 @@ The macOS equivalent for the JAVA_HOME line is `/usr/libexec/java_home
 macOS; on macOS use `export JAVA_HOME=$(/usr/libexec/java_home -v 17)`
 instead.
 
-`buildozer.spec` reads the SDK location via `android.sdk_path =
-$ANDROIDSDK`. The bare-dollar form is Buildozer's documented env-var
-substitution; an unset `ANDROIDSDK` expands to an empty string, which
-Buildozer surfaces as the misleading *"Android SDK not found"* rather
-than a Python-stack `KeyError`.
+`buildozer.spec` pins the toolchain to the repository-local
+`android.sdk_path = %(source.dir)s/.android-sdk` and
+`android.ndk_path = %(source.dir)s/.android-sdk/ndk/28.0.13004108`
+(both gitignored). Create/populate that directory on your machine, or
+point the two properties at your own SDK/NDK. GitHub Actions cannot use
+them — `.android-sdk` is absent on the runner — so `release.yml` rewrites
+both properties to the toolchain it installs (`$ANDROIDSDK` /
+`$ANDROIDNDK`) right before `buildozer` runs.
 
 ### Realistic time-to-first-APK
 
@@ -128,7 +131,8 @@ missing Cython, missing `JAVA_HOME`, or a multi-JDK ambiguity. Each
 iteration adds 30 min to several hours. Budget ~5 GB on disk for `.gradle`
 / `p4a` caches.
 
-Kivy/Buildozer recipes have been validated against NDK **r26d / r27**; the
+Kivy/Buildozer recipes have been validated in this repo against NDK
+**28.0.13004108** (the version pinned by `buildozer.spec`); the
 earlier `r25c+` baseline compiles but triggers a loud version warning
 you'll then have to silence anyway.
 

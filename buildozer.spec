@@ -31,7 +31,7 @@ version.pattern = 0.1
 #
 # Pillow is required at runtime by ``ui.services.folium_renderer`` (offline
 # route map PNG). The version pin matches ``requirements.txt`` and is the
-# line whose p4a recipe builds cleanly on NDK r26d. ``geopy`` is retained
+# line whose p4a recipe builds cleanly on NDK 28.0.13004108. ``geopy`` is retained
 # for ``requirements.txt`` parity (size impact negligible).
 #
 # CRITICAL PIN: Kivy 2.3.0 + KivyMD 1.1.1 are stable here with Python 3.11

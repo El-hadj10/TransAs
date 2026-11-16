@@ -55,6 +55,9 @@
 |---|---------|-------|
 | 6 | **UI Kivy/KivyMD** (`main.py` + `ui/screens/`) | ✅ Livré Étape 3 |
 | 7 | **Premier build APK** end-to-end (1–3 h, ~5 GB sur disque) | ✅ Livré (md5 `98730137…`, 28.9 MB) |
+| 8 | **Écran terrain `SafeTransAsScreen`** : carte OSM, arrêts, LIVRÉ, partage/impression | ✅ Livré | — |
+| 9 | **« Ajouter par voix »** : dictée Android → arrêt ajouté directement à la liste | ✅ Livré | vérifié sur S24 |
+| 10 | **Départ temps réel** : `OPTIMISER L'ORDRE` part de la position du livreur quand « Départ » est vide | ✅ Livré | vérifié sur S24 (37,3 km · OSRM) |
 
 ### 🔮 Roadmap future
 
@@ -172,7 +175,7 @@ sudo apt install -y \
     libgstreamer1.0-dev libasound2-dev
 sudo apt install openjdk-17-jdk
 pip install 'Cython>=0.29.36,<3.0.0' buildozer
-# Kit Android (cmdline-tools + platform-34 + build-tools 34 + NDK r26d) :
+# Kit Android (cmdline-tools + platform-34 + build-tools 34 + NDK 28.0.13004108) :
 # voir cover/README.md § Prerequisite toolchain (la table complète est là-bas)
 ```
 
@@ -334,7 +337,7 @@ git tag v0.1 && git push --tags                        # → déclenche .github/
 |-------|--------|
 | Trigger | Tag push `v*` ou Run workflow manuel (dry-run) |
 | Matrix | 3 archs : `armeabi-v7a`, `arm64-v8a`, `x86_64` |
-| Toolchain | Ubuntu 22.04 · Python 3.10 · openjdk-17-jdk-headless · Android SDK 34 + NDK r26d |
+| Toolchain | Ubuntu 22.04 · Python 3.10 · openjdk-17-jdk-headless · Android SDK 34 + NDK 28.0.13004108 |
 | Build | `buildozer android debug arch=${{ matrix.arch }}` |
 | Sign | Keystore décodé depuis le secret `KEYSTORE_BASE64` |
 | Verify | `apksigner verify -v` + `aapt2 dump badging` (sanity checks) |
