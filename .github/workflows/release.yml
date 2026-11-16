@@ -423,6 +423,13 @@ jobs:
           export CC_FOR_BUILD="${CC_FOR_BUILD:-gcc}"
           export CONFIG_SHELL=/bin/bash
           echo "::notice::iter 35 CC_FOR_BUILD=${CC_FOR_BUILD} CONFIG_SHELL=${CONFIG_SHELL}"
+          # buildozer.spec pins the SDK/NDK to the repository-local
+          # `.android-sdk` used on the developer machine. That directory is
+          # gitignored and absent on the runner, so point the two properties
+          # at the toolchain setup-android@v4 installed and exported here.
+          sed -i "s|^android.sdk_path = .*|android.sdk_path = ${ANDROIDSDK}|" buildozer.spec
+          sed -i "s|^android.ndk_path = .*|android.ndk_path = ${ANDROIDNDK}|" buildozer.spec
+          echo "::notice::buildozer.spec SDK=${ANDROIDSDK} NDK=${ANDROIDNDK}"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             buildozer --verbose android debug \
               arch=${{ matrix.arch }} \
