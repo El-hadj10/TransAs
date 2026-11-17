@@ -46,6 +46,9 @@ android.ndk_path = %(source.dir)s/.android-sdk/ndk/28.0.13004108
 
 # Use the local python-for-android checkout. The release workflow patches
 # Cython/Python selectors and links libc++ for NDK 28 before building.
+# KivyMD 1.1.1 has no PyPI wheel: the local recipe builds it from the sdist
+# instead of letting p4a's wheel-only resolver reject it.
+p4a.local_recipes = %(source.dir)s/p4a-recipes
 p4a.source_dir = %(source.dir)s/.local/python-for-android
 android.skip_update = 1
 

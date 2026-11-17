@@ -51,12 +51,16 @@ python scripts/patch_p4a_stl.py .local/python-for-android
 
 Versions pinnées dans `buildozer.spec` : `kivy==2.3.1` (dernière 2.3.x, celle par défaut
 de la recipe p4a, compatible NDK 28) et `kivymd==1.1.1` (**ne pas monter en 2.0.0** :
-toutes les classes sont renommées, l'app ne démarre plus). KivyMD 1.1.1 n'a pas de
-wheel PyPI : c'est normal, p4a l'installe depuis le sdist à l'étape
-`pip install --target` (sans `--only-binary`). Le message
-`ERROR: No matching distribution found for kivymd==1.1.1` qui apparaît dans le log
-vient d'une sonde `pip --dry-run --only-binary` **non fatale** (précédée de
-`Auto module resolution failed`) : ce n'est pas le point de rupture.
+toutes les classes sont renommées, l'app ne démarre plus).
+
+KivyMD 1.1.1 n'existe sur PyPI qu'en sdist (aucun wheel). p4a résout les
+dépendances hors recipes avec `pip install --only-binary=:all:`, d'où
+`ERROR: No matching distribution found for kivymd==1.1.1` et l'échec du build
+(run 44096850479). Le correctif est la **recipe locale** `p4a-recipes/kivymd/`,
+branchée par `p4a.local_recipes = %(source.dir)s/p4a-recipes` : p4a compile
+le sdist en wheel Android et l'installe dans le dist, sans resolver wheel-only.
+Si tu ajoutes une dépendance qui n'a pas de wheel, mets-la en recipe locale
+plutôt que de compter sur l'installation `pip` automatique.
 
 Rappel : p4a cache ses builds dans `.buildozer/`. Après un changement de version de
 Kivy ou de flags de compilation, supprimer `other_builds/kivy-sdl2` et
