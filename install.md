@@ -32,6 +32,37 @@
 | 2 | Avoir le SDK NDK + cmdline-tools en place | Sinon suivre `knowledge.md` § "APK build prerequisites" |
 | 3 | Avoir `bin/transas-0.1-arm64-v8a-debug.apk` (29,7 MB) | `buildozer android debug` en local, ou artifact du workflow CI — md5 de référence `a5698e3651be15fe38d0e96e440c2382` |
 
+### 2 bis. Reconstruire l'APK — pannes de compilation connues (NDK 28 / clang 19)
+
+Le toolchain NDK 28 casse deux familles de choses dans python-for-android ; les deux
+sont corrigées par un script versionné, à lancer **après le clone p4a et avant
+`buildozer`** (le workflow CI fait exactement pareil, donc local et CI convergent) :
+
+```bash
+python scripts/patch_p4a_stl.py .local/python-for-android
+# attendu : "p4a STL patch: 5 Application.mk files (...), libthorvg ..., kivy ..."
+# idempotent : un 2e passage doit afficher "0 changed" et "already patched"
+```
+
+| Panne | Symptôme dans le log | Correctif appliqué par le script |
+|-------|----------------------|----------------------------------|
+| Link SDL2 / thorvg | `ld.lld: error: undefined symbol: operator new` puis `std::__ndk1::*`, puis `sincosf`/`tanf`/`powf` | `APP_STL := c++_shared` + `APP_LDFLAGS += -lc++_shared` dans tous les `Application.mk` ; override de `LibThorVGRecipe.get_recipe_env` qui ajoute `-lc++_shared -lm` aux `LDFLAGS` lus par meson |
+| Compilation Kivy | `error: incompatible function pointer types assigning to ... glShaderSource [-Wincompatible-function-pointer-types]` | override de `KivyRecipe.get_recipe_env` : `-Wno-error=incompatible-function-pointer-types -Wno-incompatible-function-pointer-types` + `PKG_CONFIG=/bin/false` (sinon les headers `/usr/include` de l'hôte fuient dans le build croisé) |
+
+Versions pinnées dans `buildozer.spec` : `kivy==2.3.1` (dernière 2.3.x, celle par défaut
+de la recipe p4a, compatible NDK 28) et `kivymd==1.1.1` (**ne pas monter en 2.0.0** :
+toutes les classes sont renommées, l'app ne démarre plus). KivyMD 1.1.1 n'a pas de
+wheel PyPI : c'est normal, p4a l'installe depuis le sdist à l'étape
+`pip install --target` (sans `--only-binary`). Le message
+`ERROR: No matching distribution found for kivymd==1.1.1` qui apparaît dans le log
+vient d'une sonde `pip --dry-run --only-binary` **non fatale** (précédée de
+`Auto module resolution failed`) : ce n'est pas le point de rupture.
+
+Rappel : p4a cache ses builds dans `.buildozer/`. Après un changement de version de
+Kivy ou de flags de compilation, supprimer `other_builds/kivy-sdl2` et
+`dists/transas` force la recompilation, sinon un succès peut venir d'un artefact
+obsolète.
+
 ## 3. Premier contact adb — le bug « device unauthorized »
 
 Quand tu branches un nouveau téléphone pour la première fois, adb **refuse** de pousser

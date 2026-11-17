@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Pin every p4a build to libc++ so NDK >= 27 links succeed.
+"""Make the p4a toolchain build with NDK 28 / clang 19.
 
-The NDK dropped libstdc++ in r27. python-for-android still relies on the
-legacy ndk-build `system` STL default and on meson cross files whose link
-arguments come from LDFLAGS, which leaves C++ symbols (`operator new`,
-`std::__ndk1::*`, `__cxa_*`) unresolved in libSDL2.so / libthorvg-1.so.
+Two families of failure are patched here:
+
+* Linking: the NDK dropped libstdc++ in r27. python-for-android still relies
+  on the legacy ndk-build `system` STL default and on meson cross files whose
+  link arguments come from LDFLAGS, which leaves C++ symbols (`operator new`,
+  `std::__ndk1::*`, `__cxa_*`) and libm (`sincosf`, `powf`) unresolved in
+  libSDL2.so / libthorvg-1.so.
+* Compiling: clang 19 promotes -Wincompatible-function-pointer-types to an
+error, which Kivy's Cython-generated cgl_gl.c trips on glShaderSource, so
+  the kivy recipe needs -Wno-error there (plus the host pkg-config guard that
+  otherwise leaks /usr/include into the Android cross build).
 
 Run this after cloning p4a and before invoking buildozer:
 
@@ -21,7 +28,37 @@ from pathlib import Path
 
 APP_STL_LINE = "APP_STL := c++_shared"
 APP_LDFLAGS_LINE = "APP_LDFLAGS += -lc++_shared"
+KIVY_MARKER = "_Kivy_get_recipe_env_ndk28"
 THORVG_MARKER = "_LibThorVG_get_recipe_env_libcxx_lm"
+
+KIVY_OVERRIDE = '''
+
+# TransAs (2026-11-17): NDK 28 ships clang 19, which makes
+# -Wincompatible-function-pointer-types an error. Kivy's Cython-generated
+# kivy/graphics/cgl_backend/cgl_gl.c fails on glShaderSource (run 43959672592),
+# so downgrade both spellings of that diagnostic to a warning. Also stop the
+# host pkg-config from leaking /usr/include headers into the cross build.
+_Kivy_get_recipe_env = KivyRecipe.get_recipe_env
+
+
+def _Kivy_get_recipe_env_ndk28(self, arch, **kwargs):
+    env = _Kivy_get_recipe_env(self, arch, **kwargs)
+    cflags = env.get("CFLAGS", "")
+    for flag in (
+        "-Wno-error=incompatible-function-pointer-types",
+        "-Wno-incompatible-function-pointer-types",
+    ):
+        if flag not in cflags:
+            cflags += " " + flag
+    env["CFLAGS"] = cflags
+    env["PKG_CONFIG"] = "/bin/false"
+    env["PKG_CONFIG_PATH"] = ""
+    env["PKG_CONFIG_LIBDIR"] = self.get_build_dir(arch.arch)
+    return env
+
+
+KivyRecipe.get_recipe_env = _Kivy_get_recipe_env_ndk28
+'''
 
 THORVG_OVERRIDE = '''
 
@@ -62,6 +99,17 @@ def patch_application_mk(path: Path) -> bool:
     return False
 
 
+def patch_kivy(recipe: Path) -> bool:
+    """Allow Kivy's generated C to compile under clang 19."""
+    text = recipe.read_text()
+    if KIVY_MARKER in text:
+        return False
+    if "class KivyRecipe" not in text:
+        raise SystemExit(f"::error::{recipe} does not define KivyRecipe")
+    recipe.write_text(text + KIVY_OVERRIDE)
+    return True
+
+
 def patch_thorvg(recipe: Path) -> bool:
     """Add -lc++_shared to the libthorvg meson recipe environment."""
     text = recipe.read_text()
@@ -81,13 +129,15 @@ def main() -> int:
     p4a = Path(sys.argv[1])
     bootstraps = p4a / "pythonforandroid" / "bootstraps"
     thorvg = p4a / "pythonforandroid" / "recipes" / "libthorvg" / "__init__.py"
-    if not bootstraps.is_dir() or not thorvg.is_file():
+    kivy = p4a / "pythonforandroid" / "recipes" / "kivy" / "__init__.py"
+    if not bootstraps.is_dir() or not thorvg.is_file() or not kivy.is_file():
         print(f"::error::{p4a} is not a python-for-android checkout", file=sys.stderr)
         return 3
 
     app_mks = sorted(bootstraps.rglob("Application.mk"))
     patched = [mk for mk in app_mks if patch_application_mk(mk)]
     thorvg_patched = patch_thorvg(thorvg)
+    kivy_patched = patch_kivy(kivy)
 
     # A silently skipped file is how the first two attempts failed: verify the
     # lines are really present instead of trusting the write.
@@ -99,10 +149,14 @@ def main() -> int:
     if THORVG_MARKER not in thorvg.read_text():
         print("::error::libthorvg override did not land", file=sys.stderr)
         return 5
+    if KIVY_MARKER not in kivy.read_text():
+        print("::error::kivy clang-19 override did not land", file=sys.stderr)
+        return 6
 
     print(f"p4a STL patch: {len(app_mks)} Application.mk files "
           f"({len(patched)} changed), libthorvg "
-          f"{'patched' if thorvg_patched else 'already patched'}")
+          f"{'patched' if thorvg_patched else 'already patched'}, kivy "
+          f"{'patched' if kivy_patched else 'already patched'}")
     return 0
 
 
