@@ -444,13 +444,16 @@ jobs:
           sed -i "s|^android.sdk_path = .*|android.sdk_path = ${ANDROIDSDK}|" buildozer.spec
           sed -i "s|^android.ndk_path = .*|android.ndk_path = ${ANDROIDNDK}|" buildozer.spec
           echo "::notice::buildozer.spec SDK=${ANDROIDSDK} NDK=${ANDROIDNDK}"
+          # The matrix arch is selected through the spec, not the CLI:
+          # `arch=<name>` is not a buildozer command and aborts the step
+          # with "Unknown command" AFTER the APK is built (run 44104873000).
+          sed -i "s|^android.archs = .*|android.archs = ${{ matrix.arch }}|" buildozer.spec
+          grep -E '^android\.archs' buildozer.spec
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             buildozer --verbose android debug \
-              arch=${{ matrix.arch }} \
               2>&1 | tee buildozer-${{ matrix.arch }}.log
           else
             buildozer --verbose android debug \
-              arch=${{ matrix.arch }} \
               2>&1 | tee buildozer-${{ matrix.arch }}.log
           fi
           rc=${PIPESTATUS[0]}
