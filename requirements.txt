@@ -17,7 +17,9 @@ Pillow==13.0.0
 # Kivy 2.3.1 contains the upstream GLES glShaderSource typedef fix required
 # by clang 17 in the Android NDK 28 toolchain (Kivy #8557 / PR #8917).
 kivy==2.3.1
-kivymd==1.1.1
+# KivyMD 1.1.1 has no PyPI binary distribution for Android targets. p4a's
+# project wheel-only resolver cannot install it; CI vendors the official
+# v1.1.1 source tree directly into the app bundle instead.
 pytest>=7.4.0
 
 # Build chain (NOT installed at runtime, only needed by buildozer / CI):
